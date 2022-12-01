@@ -1,0 +1,7 @@
+,text_id,sent_id,trigger,target,trigger_idx,target_idx,target_surp,pmi,topk_prob,kld,j_preds,ji_preds,is_multitok
+0,13,3.0,treats,everybody,1,0,5.941951751708984,4.552691459655762,0.5766081213951111,2.324469815666327,"['he', 'she', 'it', 'everyone', 'god']","['i', 'you', 'he', 'she', 'they']",False
+1,13,3.0,it,everybody,2,0,5.941951751708984,2.126882553100586,-0.005682170391082764,0.16361491993411778,"['he', 'she', 'it', 'everyone', 'god']","['he', 'she', 'it', 'everyone', 'god']",False
+2,13,3.0,it,treats,2,1,6.011800765991211,3.1512460708618164,0.3692108988761902,1.9673021377093984,"['sees', 'does', 'did', 'saw', 'says']","['thinks', 'is', 'does', 'feels', 'lives']",False
+3,13,3.0,differently,everybody,3,0,5.941951751708984,1.3160767555236816,0.01663106679916382,0.20569562176399273,"['he', 'she', 'it', 'everyone', 'god']","['he', 'she', 'it', 'everyone', 'and']",False
+4,13,3.0,differently,treats,3,1,6.011800765991211,10.156682968139648,0.37420037388801575,2.2731846446751205,"['sees', 'does', 'did', 'saw', 'says']","['knew', 'knows', 'saw', 'loved', 'liked']",False
+5,13,3.0,differently,it,3,2,4.969111442565918,-0.07313299179077148,0.09039878845214844,0.41734769948131906,"['you', 'me', 'us', 'them', 'him']","['me', 'you', 'him', 'her', 'them']",False

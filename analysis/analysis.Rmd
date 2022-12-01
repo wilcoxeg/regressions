@@ -1,0 +1,250 @@
+---
+title: "Regressions: Analysis"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+shhh(library(Hmisc))
+
+
+theme_set(theme_bw())
+options(digits=4)
+options(dplyr.summarise.inform = FALSE)
+set.seed(444)
+```
+
+
+```{r}
+
+regress_df = read.csv("../data/regression_df.csv") %>% dplyr::select(-X) %>%
+  mutate(regression = if_else(n_subj > 0, T, F),
+         is_multitok = as.logical(is_multitok))
+
+regress_df_pos = regress_df %>% filter(regression == T) %>% filter(is_multitok == F)
+#regress_df_neg = sample_n(regress_df %>% filter(regression == F, is_multitok == F), nrow(regress_df_pos))
+regress_df_neg = regress_df %>% filter(regression == F, is_multitok == F)
+
+  
+df = rbind(regress_df_pos, regress_df_neg) %>%
+  mutate(dist = trigger_ia_idx - target_ia_idx,
+         trigger_len = nchar(trigger),
+         target_len = nchar(target)) %>%
+  rename(topk = topk_prob)
+
+```
+
+
+## Logistic Regression Analysis
+
+```{r}
+
+model_cross_val_logistic = function(form, df, num_folds=10){
+  
+  folds <- cut(seq(1,nrow(df)),breaks=num_folds,labels=FALSE)
+  
+  estimates = data.frame()
+  models <- data.frame()
+  for(i in 1:num_folds){
+    testIndexes = which(folds==i,arr.ind=TRUE)
+    testData = df[testIndexes,]
+    trainData = df[-testIndexes,]
+
+    model = glm(as.formula(form), family="binomial", data = trainData)
+    
+    preds = testData %>% dplyr::select(regression) %>% rename(y=regression) %>% 
+      mutate(pred = predict(model, newdata = testData)) %>% mutate(pred = if_else(pred <= 0, F, T))
+
+    estimates = rbind(estimates, preds)
+    models = rbind(models, model$coefficients )
+  }
+
+  result = list(estimates, models)
+  return( result )
+}
+
+```
+
+
+```{r}
+regression_forms = c(
+  "regression ~ target_len + target_surp + dist",
+  "regression ~ target_len + target_surp + dist + pmi",
+  "regression ~ target_len + target_surp + dist + topk",
+  "regression ~ target_len + target_surp + dist + kld",
+  "regression ~ target_len + target_surp + dist + pmi + topk + kld"
+)
+
+regression_form_tags = c("baseline", "pmi", "topk", "kld", "all")
+
+
+accuracy_df = data.frame()
+coeff_list = c()
+for(i in c(1:length(regression_forms))) {
+  
+  form = regression_forms[i]
+  tag = regression_form_tags[i]
+  
+  result = model_cross_val_logistic(form, df)
+  
+  preds = data.frame(result[1]) %>%
+    mutate(correct = y == pred) %>%
+    summarise(
+      m = mean(correct), n_success = sum(correct), n = nrow(.),
+      upper = binconf(x=n_success, n=n)[2],lower = binconf(x=n_success, n=n)[3] ) %>%
+    mutate(tag = tag)
+  accuracy_df = rbind(accuracy_df, preds)
+  
+  coeff_list = c(coeff_list, result[2])
+  
+}
+
+```
+
+
+## Plot accuracy for logistic model
+
+```{r}
+
+accuracy_df %>%
+  ggplot(aes(x = tag, y = m)) +
+    geom_point() +
+    geom_errorbar(aes(ymin = lower, ymax = upper)) +
+    ylab("Accuracy")
+
+```
+
+## Plot Coefficients for Logistic Model
+
+```{r}
+  
+coeff_df = data.frame(coeff_list[5][1])
+names(coeff_df) = c("intercept","target_len","target_surp","dist","pmi","topk","kld")
+
+coeff_agg_df = coeff_df %>%
+  gather(key="coeff", value="value") %>%
+  group_by(coeff) %>%
+    summarise(
+      m = mean(value), s = std.error(value),
+      upper = m + 1.96 * s, lower = m - 1.96 * s
+    ) %>%
+  ungroup()
+
+coeff_agg_df %>%
+  ggplot(aes(x = coeff, y =m)) +
+    geom_point(size = 2) +
+    geom_errorbar(aes(ymin = lower, ymax = upper))
+
+
+```
+
+# Linear Regression
+
+```{r}
+
+model_cross_val_linear = function(form, df, d_var, num_folds=10){
+  
+  folds <- cut(seq(1,nrow(df)),breaks=num_folds,labels=FALSE)
+  
+  estimates = data.frame()
+  models <- data.frame()
+  for(i in 1:num_folds){
+    testIndexes = which(folds==i,arr.ind=TRUE)
+    testData = df[testIndexes,]
+    trainData = df[-testIndexes,]
+
+    model = lm(as.formula(form), data = trainData)
+
+    stdev = sigma(model)
+    densities <- data.frame(log(dnorm(testData[[d_var]], mean=predict(model, newdata=testData), sd=stdev)))
+
+    estimates = rbind(estimates, densities)
+    models = rbind(models, model$coefficients )
+    
+  }
+
+  result = list(estimates, models)
+  return( result )
+}
+
+```
+
+
+```{r}
+regression_forms = c(
+  "n_regressions ~ target_len + target_surp + dist",
+  "n_regressions ~ target_len + target_surp + dist + pmi",
+  "n_regressions ~ target_len + target_surp + dist + topk",
+  "n_regressions ~ target_len + target_surp + dist + kld",
+  "n_regressions ~ target_len + target_surp + dist + pmi + topk + kld"
+)
+
+regression_form_tags = c("baseline", "pmi", "topk", "kld", "all")
+
+
+loglik_df = data.frame()
+coeff_list = c()
+for(i in c(1:length(regression_forms))) {
+  
+    form = regression_forms[i]
+    tag = regression_form_tags[i]
+    result = model_cross_val_linear(form, df, "n_regressions")
+  
+    estimates = data.frame(result[1]) %>% mutate(model = tag)
+    loglik_df = rbind(loglik_df, estimates)
+    coeff_list = c(coeff_list, result[2])
+}
+
+names(loglik_df) = c("loglik", "model")
+loglik_df = loglik_df %>% filter(loglik > -Inf)
+
+```
+
+
+```{r}
+loglik_df %>%
+  drop_na() %>%
+  group_by(model) %>%
+    summarise(
+      m = mean(loglik),
+      s = std.error(loglik),
+      upper = m + s * 1.96,
+      lower = m - s * 1.96
+    ) %>%
+  ungroup() %>%
+  ggplot(aes(x = model, y = m)) +
+    geom_point() +
+    geom_errorbar(aes(ymin=lower, ymax=upper))
+
+
+m = loglik_df %>%
+  filter(model == "baseline" | model == "topk") %>%
+  lm(loglik ~ model, data = .)
+summary(m)
+
+baseline_logliks = loglik_df %>% filter(model == "baseline")
+topk_logliks = loglik_df %>% filter(model == "kld")
+
+t.test(baseline_logliks$loglik, topk_logliks$loglik)
+
+
+```
+
+
+
+
