@@ -1,0 +1,514 @@
+---
+title: "Cleaning Corpora"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+
+theme_set(theme_bw())
+options(digits=4)
+options(dplyr.summarise.inform = FALSE)
+```
+
+For each corpus we want:
+* A cleaned DF with all the saccades
+* A DF with the pairwise statistics (pairwise modeling df)
+* A DF with the by-word statistics (byword modeling df)
+
+
+# Meco
+
+```{r}
+
+
+stats_df = data.frame()
+results_path = "../data/results/meco_results/"
+results_list = list.files(path=results_path, pattern=".csv")
+
+for (f in results_list) {
+  lang = substr(f, 6, 7)
+  df = read.csv(paste0(results_path, "/", f)) %>%
+    mutate(lang = lang)
+  stats_df = rbind(stats_df, df)
+}
+
+modeling_df = stats_df %>%
+  dplyr::select(-X) %>%
+  mutate(target_idx = target_idx + 1, trigger_idx = trigger_idx + 1) %>% # 0-indexing vs. 1-indexing for human data
+  
+  mutate(ppmi = if_else(pmi > 0, pmi, 0),
+         npmi = if_else(pmi < 0, pmi, 0))
+  
+write.csv(modeling_df, "../data/harmonized_results/meco_pairwise_stats_df.csv")
+
+
+```
+
+```{r}
+
+load(file='../data/meco/joint_fix_trimmed.rda')
+meco_raw_df = joint.fix
+
+```
+
+```{r}
+
+sacc_df = meco_raw_df %>%
+  rename(subj = uniform_id,
+         text_id = trialid,
+         curr_fix_dur = dur,
+         curr_fix_order = fixid,
+         sent_id = sentnum,
+         curr_ia_idx = sent.word) %>%
+    mutate(prev_ia_idx = lag(curr_ia_idx),
+           prev_ia = lag(word),
+           next_ia_idx = lead(curr_ia_idx),
+           next_ia = lead(word)) %>%
+  mutate(prev_text_id = lag(text_id), next_text_id = lead(text_id),
+         prev_subj_id = lag(subj), next_subj_id = lead(subj)) %>%
+  filter(text_id == prev_text_id, text_id == next_text_id,
+         subj == prev_subj_id, subj == next_subj_id) %>%
+  dplyr::select(subj, lang, text_id, curr_fix_dur, curr_fix_order, sent_id, curr_ia_idx, lang,
+                prev_ia_idx, prev_ia, next_ia_idx, next_ia)
+
+write.csv(sacc_df, "../data/harmonized_results/meco_saccades_df.csv")
+
+
+```
+
+
+#Provo
+
+## Combine Modeling Results
+
+
+```{r}
+
+stats_df = data.frame()
+results_path = "../data/results/provo_results/"
+results_list = list.files(path=results_path, pattern=".csv")
+
+for (f in results_list) {
+  df = read.csv(paste0(results_path, "/", f))
+  stats_df = rbind(stats_df, df)
+}
+
+modeling_df = stats_df %>%
+  dplyr::select(-X) %>%
+  mutate(target_idx = target_idx + 1, trigger_idx = trigger_idx + 1) %>% # 0-indexing vs. 1-indexing for human data
+  
+  mutate(ppmi = if_else(pmi > 0, pmi, 0),
+         npmi = if_else(pmi < 0, pmi, 0))
+  
+write.csv(modeling_df, "../data/harmonized_results/provo_pairwise_stats_df.csv")
+
+```
+
+
+## Word by word modeling df
+
+```{r}
+
+by_word_modeling_df = modeling_df %>%
+  group_by(text_id, sent_id, trigger_idx, mask_type) %>%
+  
+    summarise(
+      word = unique(trigger),
+      freq = unique(trigger_freq),
+      surp = unique(trigger_surp),
+      
+      max_surp = max(target_surp),
+      mean_surp = mean(target_surp),
+      max_ppmi = max(ppmi),
+      mean_ppmi = mean(ppmi),
+      max_npmi = max(npmi),
+      mean_npmi = mean(npmi),
+      
+      max_e_pmi = max(e_pmi),
+      mean_e_pmi = mean(e_pmi),
+      max_e_ppmi = max(e_ppmi),
+      mean_e_ppmi = mean(e_ppmi),
+      max_e_npmi = max(e_npmi),
+      mean_e_npmi = mean(e_npmi)
+    ) %>%
+  mutate(len = nchar(word))
+
+by_word_modeling_df
+
+write.csv(by_word_modeling_df, "../data/harmonized_results/provo_byword_stats_df.csv")
+
+```
+
+
+## Reference DF
+
+Used to link modeling df to human data df
+
+```{r}
+refs_df = read.csv("../data/provo/provo_refs.tsv", sep="\t") %>% dplyr::select(-X) %>%
+  rename(CURRENT_FIX_INTEREST_AREA_INDEX = Word_Number,
+         TEXT_ID = Text_ID)
+  
+```
+
+## Clean Provo Data
+
+Takes a little while to load
+```{r}
+provo_df = read.csv("../data/provo/Provo_Corpus-Additional_Eyetracking_Data-Fixation_Report.csv")
+```
+
+
+```{r}
+
+target_df = provo_df %>%
+  dplyr::select(CURRENT_FIX_DURATION, CURRENT_FIX_INDEX, CURRENT_FIX_INTEREST_AREAS, CURRENT_FIX_INTEREST_AREA_INDEX, CURRENT_FIX_INTEREST_AREA_LABEL,
+                NEXT_FIX_DURATION, NEXT_FIX_INTEREST_AREAS, NEXT_FIX_INTEREST_AREA_INDEX, NEXT_FIX_INTEREST_AREA_LABEL,
+                PREVIOUS_FIX_DURATION, PREVIOUS_FIX_INTEREST_AREAS, PREVIOUS_FIX_INTEREST_AREA_INDEX, PREVIOUS_FIX_INTEREST_AREA_LABEL,
+                RECORDING_SESSION_LABEL, TRIAL_INDEX, trial, TRIAL_LABEL)
+
+```
+
+Interest areas are labeled for the whole next, not by each individual sentence. So we need to re-label them to be compatible with the other corpora
+
+```{r}
+curr_ref_df = read.csv("../data/provo/provo_refs.tsv", sep="\t") %>% dplyr::select(-X, -Word_Cleaned, -Word) %>%
+  rename(TEXT_ID = Text_ID,
+         curr_sent_idx = Sentence_Number,
+         curr_ia_idx = Word_In_Sentence_Number,
+         CURRENT_FIX_INTEREST_AREA_INDEX = Word_Number)
+
+next_ref_df = read.csv("../data/provo/provo_refs.tsv", sep="\t") %>% dplyr::select(-X, -Word_Cleaned, -Word) %>%
+  rename(TEXT_ID = Text_ID,
+         next_sent_idx = Sentence_Number,
+         next_ia_idx = Word_In_Sentence_Number,
+         NEXT_FIX_INTEREST_AREA_INDEX = Word_Number)
+
+prev_ref_df = read.csv("../data/provo/provo_refs.tsv", sep="\t") %>% dplyr::select(-X, -Word_Cleaned, -Word) %>%
+  rename(TEXT_ID = Text_ID,
+         prev_sent_idx = Sentence_Number,
+         prev_ia_idx = Word_In_Sentence_Number,
+         PREVIOUS_FIX_INTEREST_AREA_INDEX = Word_Number)
+```
+
+
+```{r}
+
+# DF with all the saccades
+sacc_df = target_df %>% rename(TEXT_ID = trial) %>%
+  # When you merge there are a lot of rows with NA at the top because the participant is glancing off screen, and that gets an ia idx of NA. That's OK, we just drop these rows. We are only interested in between word saccades.
+  merge(curr_ref_df, all=T, by = c("TEXT_ID", "CURRENT_FIX_INTEREST_AREA_INDEX")) %>%
+  merge(next_ref_df, all=T, by = c("TEXT_ID", "NEXT_FIX_INTEREST_AREA_INDEX")) %>%
+  merge(prev_ref_df, all=T, by = c("TEXT_ID", "PREVIOUS_FIX_INTEREST_AREA_INDEX")) %>%
+  rename(
+    text_id = TEXT_ID,
+    curr_fix_dur = CURRENT_FIX_DURATION,
+    curr_fix_order = CURRENT_FIX_INDEX,
+    word = CURRENT_FIX_INTEREST_AREA_LABEL,
+    next_word = NEXT_FIX_INTEREST_AREA_LABEL,
+    subj = RECORDING_SESSION_LABEL,
+    sent_id = curr_sent_idx,
+  ) %>%
+  filter(sent_id == next_sent_idx,
+         sent_id == prev_sent_idx) %>%
+  dplyr::select(text_id, curr_ia_idx, curr_fix_dur, curr_fix_order, word, next_ia_idx, next_word, prev_ia_idx, subj, sent_id)
+
+write.csv(sacc_df, "../data/harmonized_results/provo_saccades_df.csv")
+
+```
+
+
+
+# UCL Data
+
+```{r}
+
+stats_df = data.frame()
+results_path = "../data/results/ucl_results/"
+results_list = list.files(path=results_path, pattern=".csv")
+
+for (f in results_list) {
+  df = read.csv(paste0(results_path, "/", f))
+  stats_df = rbind(stats_df, df)
+}
+
+modeling_df = stats_df %>%
+  dplyr::select(-X) %>%
+  mutate(target_idx = target_idx + 1, trigger_idx = trigger_idx + 1) %>%  # 0-indexing vs. 1-indexing for human data
+  mutate(ppmi = if_else(pmi > 0, pmi, 0),
+         npmi = if_else(pmi < 0, pmi, 0))
+  
+write.csv(modeling_df, "../data/harmonized_results/ucl_pairwise_stats_df.csv")
+
+```
+
+
+```{r}
+
+by_word_modeling_df = modeling_df %>%
+  
+  group_by(text_id, sent_id, trigger_idx) %>%
+    summarise(
+      word = unique(trigger),
+      freq = unique(trigger_freq),
+      surp = unique(trigger_surp),
+      
+      max_surp = max(target_surp),
+      mean_surp = mean(target_surp),
+      
+      max_ppmi = max(ppmi),
+      mean_ppmi = mean(ppmi),
+      max_npmi = max(npmi),
+      mean_npmi = mean(npmi),
+      
+      max_e_pmi = max(e_pmi),
+      mean_e_pmi = mean(e_pmi),
+      max_e_ppmi = max(e_ppmi),
+      mean_e_ppmi = mean(e_ppmi),
+      max_e_npmi = max(e_npmi),
+      mean_e_npmi = mean(e_npmi)
+    ) %>%
+  mutate(len = nchar(word))
+
+by_word_modeling_df
+
+write.csv(by_word_modeling_df, "../data/harmonized_results/ucl_byword_stats_df.csv")
+
+
+```
+
+
+
+```{r}
+
+ucl_sents = read.csv("../data/ucl/ucl_sents.tsv", sep="\t")
+
+ucl_ref_df = ucl_sents %>%
+  mutate(text = str_split(text, pattern = " ")) %>%
+  unnest(text) %>%
+  group_by(Text_ID, Sentence_Number) %>%
+    mutate(Word_idx = row_number()) %>%
+  ungroup()
+
+write.csv(ucl_ref_df, "../data/ucl/ucl_refs.csv")
+
+```
+
+```{r}
+ucl_df = read.csv("../data/ucl/eyetracking.fix.tsv", sep="\t") %>%
+  dplyr::select(-gaze_x, -gaze_y, -letter_pos)
+
+table(ucl_df$subj_nr)
+
+```
+
+
+```{r}
+
+sacc_df = ucl_df %>%
+  mutate(
+    prev_ia_idx = lag(word_pos),
+    prev_word = lag(word),
+    prev_sent_id = lag(sent_nr),
+    prev_subj_id = lag(subj_nr),
+    next_ia_idx = lead(word_pos),
+    next_word = lead(word),
+    next_sent_id = lead(sent_nr),
+    next_subj_id = lead(subj_nr)
+  ) %>%
+  rename(
+    curr_ia_idx = word_pos,
+    sent_id = sent_nr,
+    subj = subj_nr,
+    curr_fix_dur = fix_duration
+  ) %>%
+  filter(sent_id == next_sent_id,
+         sent_id == prev_sent_id,
+         prev_subj_id == subj,
+         subj == next_subj_id) %>%
+  mutate(text_id = sent_id) %>%
+
+  dplyr::select(text_id, curr_ia_idx, curr_fix_dur, word, next_ia_idx, next_word, prev_ia_idx, subj, sent_id)
+
+write.csv(sacc_df, "../data/harmonized_results/ucl_saccades_df.csv")
+
+
+```
+
+
+
+# Dundee Data
+
+```{r}
+
+dundee_df = read_csv("../data/dundee/dundee_text.csv") %>%
+  dplyr::select(-`...1`)
+
+```
+
+
+```{r}
+dundee_ref_df = dundee_df %>%
+  mutate(word = tolower(word)) %>%
+  mutate(eos = if_else(punc_code %in% c(1,5,6), 1, 0)) %>%
+  mutate(eos = lag(eos)) %>%
+  mutate(eos = if_else(is.na(eos), 0, eos)) %>%
+  group_by(text_id) %>%
+    mutate(sent_id = cumsum(eos)) %>%
+  ungroup() %>%
+  dplyr::select(word, text_id, sent_id) %>%
+  group_by(text_id) %>%
+    mutate(word_in_text_idx = row_number()) %>%
+  ungroup() %>%
+  group_by(text_id, sent_id) %>%
+    mutate(word_in_sent_idx = row_number()) %>%
+  ungroup()
+
+dundee_ref_df %>%
+  arrange(text_id, sent_id)
+
+```
+
+## Modeling Results
+
+```{r}
+
+
+stats_df = data.frame()
+results_path = "../data/results/dundee_results/"
+results_list = list.files(path=results_path, pattern=".csv")
+
+for (f in results_list) {
+  df = read.csv(paste0(results_path, "/", f))
+  stats_df = rbind(stats_df, df)
+}
+
+modeling_df = stats_df %>%
+  dplyr::select(-X) %>%
+  mutate(target_idx = target_idx + 1, trigger_idx = trigger_idx + 1) %>%  # 0-indexing vs. 1-indexing for human data
+  mutate(ppmi = if_else(pmi > 0, pmi, 0),
+         npmi = if_else(pmi < 0, pmi, 0))
+
+write.csv(modeling_df, "../data/harmonized_results/dundee_pairwise_stats_df.csv")
+
+
+```
+
+```{r}
+
+by_word_modeling_df = modeling_df %>%
+  group_by(text_id, sent_id, trigger_idx) %>%
+    summarise(
+      word = unique(trigger),
+      freq = unique(trigger_freq),
+      surp = unique(trigger_surp),
+      
+      max_surp = max(target_surp),
+      mean_surp = mean(target_surp),
+      
+      max_ppmi = max(ppmi),
+      mean_ppmi = mean(ppmi),
+      max_npmi = max(npmi),
+      mean_npmi = mean(npmi),
+      
+      max_e_pmi = max(e_pmi),
+      mean_e_pmi = mean(e_pmi),
+      max_e_ppmi = max(e_ppmi),
+      mean_e_ppmi = mean(e_ppmi),
+      max_e_npmi = max(e_npmi),
+      mean_e_npmi = mean(e_npmi)
+    ) %>%
+  mutate(len = nchar(word))%>%
+  ungroup()
+
+by_word_modeling_df
+
+write.csv(by_word_modeling_df, "../data/harmonized_results/dundee_byword_stats_df.csv")
+
+
+```
+
+```{r}
+
+dundee_raw_eyetracking_df = read.csv("../data/dundee/dundee_eyetracking.csv") %>%
+  dplyr::select(-LAUN)
+
+dundee_eyetracking_df = dundee_raw_eyetracking_df %>%
+  rename(word_in_text_idx = Word_Number) %>%
+  # Merge with the reference dataframe to get sentence id numbers attached to each word
+  merge(dundee_ref_df, by=c("text_id", "word_in_text_idx")) %>%
+  # Arrange on the original index to get the correct order of fixations again
+  arrange(X)
+
+sacc_df = dundee_eyetracking_df %>%
+  rename(subj_id = WorkerId,
+         word = word.y,
+         curr_ia_idx = word_in_sent_idx) %>%
+  mutate(
+    next_ia_idx = lead(curr_ia_idx),
+    next_word = lead(word),
+    next_sent_id = lead(sent_id),
+    next_subj_id = lead(subj_id),
+    prev_ia_idx = lag(curr_ia_idx),
+    prev_word = lag(word),
+    prev_sent_id = lag(sent_id),
+    prev_subj_id = lag(subj_id)
+  ) %>%
+  filter(sent_id == next_sent_id,
+         sent_id == prev_sent_id,
+         prev_subj_id == subj_id,
+         subj_id == next_subj_id) %>%
+  rename(
+    curr_fix_dur = time,
+    subj = subj_id
+  ) %>%
+  dplyr::select(text_id, curr_ia_idx, curr_fix_dur, word, next_ia_idx, next_word, prev_ia_idx, subj, sent_id)
+
+write.csv(sacc_df, "../data/harmonized_results/dundee_saccades_df.csv")
+
+```
+
+
+
+## Get Dundee Sentences
+
+
+Read in the plaintext sentences and organize in dataframe for modeling
+
+```{r}
+
+dundee_sents_df = dundee_df %>%
+  
+  mutate(word = tolower(word)) %>%
+  mutate(eos = if_else(punc_code %in% c(1,5,6), 1, 0)) %>%
+  mutate(eos = lag(eos)) %>%
+  group_by(text_id) %>%
+    mutate(sent_id = cumsum(eos)) %>%
+  ungroup() %>%
+  group_by(text_id, sent_id) %>%
+    summarise(text = paste(word, collapse = ' ')) %>%
+  ungroup() %>%
+  mutate(text =  gsub('[:;?.,"!`]','', text)) %>%
+  rename(Text_ID = text_id,
+         Sentence_Number = sent_id)
+  
+  write.csv(dundee_sents_df, "../data/dundee/dundee_sents.csv")
+
+
+```

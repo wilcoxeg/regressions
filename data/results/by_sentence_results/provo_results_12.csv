@@ -1,7 +1,0 @@
-,text_id,sent_id,trigger,target,trigger_idx,target_idx,target_surp,pmi,topk_prob,kld,j_preds,ji_preds,is_multitok
-0,5,2.0,was,it,1,0,0.18504482507705688,4.681834697723389,0.9195022583007812,4.328772547893266,"['it', 'this', 'everything', 'he', 'each']","['all', 'it', 'legs', '-', 'and']",False
-1,5,2.0,securely,it,2,0,0.18504482507705688,0.19179245829582214,0.09943628311157227,0.17306906267063432,"['it', 'this', 'everything', 'he', 'each']","['it', 'he', 'she', 'everything', 'i']",False
-2,5,2.0,securely,was,2,1,2.136984348297119,-1.2321268320083618,0.15660852193832397,0.7324982181478251,"['is', 'was', 'remains', 'stays', 'remained']","['was', 'is', 'had', 'has', 'could']",False
-3,5,2.0,fastened,it,3,0,0.18504482507705688,1.2562897205352783,0.33136284351348877,1.0517665430575522,"['it', 'this', 'everything', 'he', 'each']","['it', 'he', 'she', 'everything', 'i']",False
-4,5,2.0,fastened,was,3,1,2.136984348297119,3.260097026824951,0.9491904377937317,5.846056993296559,"['is', 'was', 'remains', 'stays', 'remained']","['closed', 'held', 'locked', 'shut', 'fit']",False
-5,5,2.0,fastened,securely,3,2,4.78942346572876,15.16661262512207,0.24197667837142944,6.669900477083072,"['not', 'metal', 'securely', 'well', 'brass']","['true', 'beautiful', 'him', 'her', 'over']",False

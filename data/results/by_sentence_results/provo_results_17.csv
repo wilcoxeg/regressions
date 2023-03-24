@@ -1,4 +1,0 @@
-,text_id,sent_id,trigger,target,trigger_idx,target_idx,target_surp,pmi,topk_prob,kld,j_preds,ji_preds,is_multitok
-0,7,1.0,didn't,dorothy,1,0,16.634437561035156,4.046253204345703,0.25795817375183105,2.809884081392048,"['i', 'he', 'she', 'they', 'it']","['i', 'you', '""', 'they', 'we']",False
-1,7,1.0,know,dorothy,2,0,16.634437561035156,1.3465995788574219,-0.018645882606506348,0.05333764364658587,"['i', 'he', 'she', 'they', 'it']","['i', 'he', 'she', 'they', 'it']",False
-2,7,1.0,know,didn't,2,1,11.807743072509766,7.323310852050781,0.6572461724281311,12.005980685970432,"['would', 'should', 'must', 'will', 'i']","['smith', 'russell', 'brown', 'parker', 'anderson']",True

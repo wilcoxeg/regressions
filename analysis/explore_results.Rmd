@@ -1,0 +1,67 @@
+---
+title: "Regressions"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+
+theme_set(theme_bw())
+options(digits=4)
+options(dplyr.summarise.inform = FALSE)
+```
+
+
+```{r}
+
+df = read.csv("../scripts/results/test_results_0.csv")%>%
+  rename(model = mask_type) %>%
+  mutate(model = case_when(model == "none" ~ "BERT-allRC", model == "mask" ~ "BERT-maskRC", model == "truncate" ~ "BERT-dropRC"))
+
+labs = rbind(df %>% dplyr::select(target_idx, target) %>% rename(idx = target_idx, w = target),
+               df %>% dplyr::select(trigger_idx, trigger) %>% rename(idx = trigger_idx, w = trigger) ) %>%
+  group_by(idx) %>% summarise(w = unique(w)) %>% ungroup() %>% arrange(idx)
+labs = labs$w
+bks = 0:(length(labs)-1)
+
+df %>%
+  gather(expectation, value, c("pmi", "e_pmi")) %>%
+  mutate(expectation = if_else(expectation == "pmi", "PMI", "E[PMI]")) %>%
+  ggplot(aes(x = trigger_idx, y = target_idx )) +
+    geom_tile(aes(fill = value)) +
+    scale_fill_gradient2() +
+    facet_grid(expectation~model) +
+    #scale_x_continuous(breaks=0:11, labels=c("regulators", "tried", "to", "contain" , "the", "damage", "by", "guaranteeing", "deposits", "at", "the", "banks")) +
+    #scale_y_continuous(breaks=0:11, labels=c("regulators", "tried", "to", "contain" , "the", "damage", "by", "guaranteeing", "deposits", "at", "the", "banks")) +
+    scale_x_continuous(breaks=bks, labels=labs) +
+    scale_y_continuous(breaks=bks, labels=labs) +
+    labs(fill = "PMI") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+
+ggsave("./images/pmi_plotting.pdf", device="pdf", width = 8, height = 3.5)
+
+```
+
+
+
+
