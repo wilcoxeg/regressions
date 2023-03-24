@@ -1,5 +1,7 @@
 # Regressions
 
+Data and scripts for running experiments on information theory and regressions in reading
+
 ## Install Dependencies
 
 Create a conda environment with
