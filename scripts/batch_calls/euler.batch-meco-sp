@@ -7,5 +7,5 @@
 #SBATCH --mail-type=END
 
 source ~/.bashrc
-conda activate mi-vs-syntax
+conda activate regressions
 python ../get_predictors.py --input_path ../../data/meco/es_meco_sents.csv --dataset meco --mlm_model bert-sp --ar_model sberbank-ai/mGPT --language es --mask_type mask
