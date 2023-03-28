@@ -66,7 +66,9 @@ meco_agg_regressions = meco_sacc_df %>%
     lang == "gr" ~ "el",
     lang == "du" ~ "nl",
     lang == "it" ~ "it",
-    lang == "tr" ~ "tr"
+    lang == "tr" ~ "tr",
+    lang == "sp" ~ "es",
+    lang == "fi" ~ "fi"
   ))
 
 meco_df = meco_pairwise_df %>%
@@ -229,7 +231,7 @@ regression_form_tags = c("Baseline", "NPMI", "PPMI", "PPMI+NPMI", "E[NPMI]", "E[
 pred_df = data.frame()
 coeff_df = data.frame()
 
-langs = c("it", "tr")
+langs = c("it", "tr", "de", "es", "fi", "nl")
 
 for(i in c(1:length(regression_forms))) {
 
@@ -260,8 +262,8 @@ for(i in c(1:length(regression_forms))) {
 #write.csv(pred_df, "./fits/agg_poisson_preds.csv")
 #write.csv(coeff_df, "./fits/agg_poisson_coeffs.csv")
 
-write.csv(pred_df, "./fits/meco_logistic_preds.csv")
-write.csv(coeff_df, "./fits/meco_logistic_coeffs.csv")
+#write.csv(pred_df, "./fits/meco_logistic_preds.csv")
+#write.csv(coeff_df, "./fits/meco_logistic_coeffs.csv")
 
 
 ```
@@ -272,8 +274,8 @@ write.csv(coeff_df, "./fits/meco_logistic_coeffs.csv")
 #pred_df = read.csv("./fits/agg_poisson_preds.csv")
 #coeff_df = read.csv("./fits/agg_poisson_coeffs.csv")
 
-pred_df = read.csv("./fits/meco_logistic_preds.csv")
-coeff_df = read.csv("./fits/meco_logistic_coeffs.csv")
+#pred_df = read.csv("./fits/meco_logistic_preds.csv")
+#coeff_df = read.csv("./fits/meco_logistic_coeffs.csv")
 
 tags = unique(pred_df$tag)
 dll_df = data.frame()
@@ -335,7 +337,7 @@ plot_df %>%
     )
 
 #ggsave("./images/agg_poisson.pdf", device="pdf", width = 8, height = 4)
-ggsave("./images/agg_meco.pdf", device="pdf", width = 8, height = 4)
+#ggsave("./images/agg_meco.pdf", device="pdf", width = 8, height = 4)
 
 ```
 
