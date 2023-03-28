@@ -162,9 +162,12 @@ def get_mask(split_sent, mt, j, i, mask_idxs):
 
 def get_pairwise_stats(split_sent, text_id, sent_id, mlm_model, ar_surps, freqs, mask_type):
     
-  	# Going to assume bert model / tokenizer. Should make generalizable
-    tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
-    model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
+    #tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
+    #model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
+
+    tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model])
+    model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model])
+    
     model.eval()
 
     mask_types = MASK_TYPE_DICT[mask_type]

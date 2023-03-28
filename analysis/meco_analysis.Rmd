@@ -34,8 +34,6 @@ options(digits=4)
 options(dplyr.summarise.inform = FALSE)
 set.seed(444)
 options(scipen=999)
-corpora = c("provo", "ucl", "dundee")
-models = c("BERT-allRC", "BERT-maskRC", "BERT-dropRC")
 ```
 
 
