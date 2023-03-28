@@ -22,6 +22,8 @@ shhh(library(ggrepel))
 shhh(library(mgcv))
 shhh(library(Hmisc))
 shhh(library(jmuOutlier))
+library("viridis")
+
 
 
 #options(JULIA_HOME = "/Applications/Julia-1.8.app/Contents/Resources/julia/bin/")
@@ -59,23 +61,20 @@ meco_agg_regressions = meco_sacc_df %>%
     target_idx = next_ia_idx
   ) %>%
   mutate(target_idx = as.integer(target_idx)) %>%
-  mutate(lang = case_when(
-    lang == "ge" ~ "de",
-    lang == "gr" ~ "el",
-    lang == "du" ~ "nl",
-    lang == "it" ~ "it",
-    lang == "tr" ~ "tr",
-    lang == "sp" ~ "es",
-    lang == "fi" ~ "fi"
-  ))
+  # MECO uses different langauge codes than ISO
+  mutate(lang = if_else(lang == "ge", "de", lang),
+         lang = if_else(lang == "sp", "es", lang),
+         lang = if_else(lang == "du", "nl", lang))
 
 meco_df = meco_pairwise_df %>%
   mutate(text_id = text_id + 1, sent_id = sent_id + 1) %>%
-  merge(meco_agg_regressions, all= T, by=c("text_id", "sent_id", "trigger_idx", "target_idx", "lang")) %>%
+  merge(meco_agg_regressions, by=c("text_id", "sent_id", "trigger_idx", "target_idx", "lang")) %>%
   mutate(corpus = "meco")
 
 meco_df %>%
   arrange(lang, text_id, sent_id, trigger_idx, target_idx)
+
+table(meco_df$lang)
 
 ```
 
@@ -229,7 +228,7 @@ regression_form_tags = c("Baseline", "NPMI", "PPMI", "PPMI+NPMI", "E[NPMI]", "E[
 pred_df = data.frame()
 coeff_df = data.frame()
 
-langs = c("it", "tr", "de", "es", "fi", "nl")
+langs = c("it", "tr", "de", "es", "fi")
 
 for(i in c(1:length(regression_forms))) {
 
@@ -241,8 +240,8 @@ for(i in c(1:length(regression_forms))) {
       
       print(paste("<", l, tag, ">", sep="  "))
       
-      #result = model_cross_val_poisson(paste0("n_regressions", form), combined_df %>% filter(corpus == c, model == m), corpus = c, tag = tag)
-      result = model_cross_val_logistic(paste0("prop_subj", form), combined_df %>% filter(lang == l, trigger_idx > 5, target_idx > 5), lang = l, tag = tag)
+      result = model_cross_val_poisson(paste0("n_regressions", form), combined_df %>% filter(lang == l), lang = l, tag = tag)
+      #result = model_cross_val_logistic(paste0("prop_subj", form), combined_df %>% filter(lang == l), lang = l, tag = tag)
 
       
       preds = data.frame(result[1]) %>%
@@ -318,23 +317,31 @@ plot_df = dll_df %>%
   ungroup()
   
 plot_df %>%
+  mutate(lang = factor(lang, levels = c("de", "es", "fi", "it", "tr"),
+         labels = c("German", "Spanish", "Finnish", "Italian", "Turkish"))) %>%
+  mutate(sig = case_when( pval >= 0.05 ~ " ",
+                        pval < 0.05 & pval >= 0.01  ~ "*",
+                        pval < 0.01 & pval >= 0.001  ~ "**",
+                        pval < 0.001  ~ "***")) %>%
   ggplot(aes(x = tag, y=m, color = theory)) +
-    geom_hline(yintercept = 0, color = "#7cd82b", linetype="dashed") +
+    geom_hline(yintercept = 0, color = "black", linetype="dashed") +
     geom_point(size = 2) +
     geom_errorbar(aes(ymax = upper, ymin = lower), width = 0.4) +
+    geom_text(aes(label = sig, color = theory), y = 0.095, size = 3, angle = 45) +
     facet_grid(.~lang, scales = "free_y") +
-    ylab("ΔLogLik") +
+    ylab("Delta LogLik") +
     labs(color="") +
-    #scale_color_manual(values=c("#8277BB", "#BB7A74")) +
+    #scale_color_viridis(discrete = TRUE, option = "D") +
     #ggtitle("Regression Count Between Words") +
+    #scale_color_manual(values=c("#39ccbd", "#3991cc")) +
     theme(
       axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
       axis.title.x = element_blank(),
       axis.text.y = element_text(angle = 90, hjust = 0.5),
-      legend.position = "right"
+      legend.position = "none"
     )
 
-#ggsave("./images/agg_poisson.pdf", device="pdf", width = 8, height = 4)
+ggsave("./images/meco_results.pdf", device="pdf", width = 8, height = 4)
 #ggsave("./images/agg_meco.pdf", device="pdf", width = 8, height = 4)
 
 ```
@@ -347,22 +354,21 @@ plot_df %>%
 
 #pred_df = read.csv("./fits/agg_poisson_preds.csv")
 
-pred_df = read.csv("./fits/agg_logistic_preds.csv")
 
 dll_npmi_comp = data.frame()
 
-for (c in corpora){
-  for (m in models){
-    temp_df = pred_df %>% filter(corpus == c, model == m)
+for (l in langs){
+    temp_df = pred_df %>% filter(lang == l)
     dll1 = temp_df[temp_df$tag  == "E[NPMI]",]$llh
     dll2 = temp_df[temp_df$tag  == "NPMI",]$llh
     dll_diff = dll1 - dll2
     dll_diff = dll_diff[!is.na(dll_diff)]
     ptest = perm.test(dll_diff, num.sim = 1000)
-    dll_npmi_comp = rbind(dll_npmi_comp, data.frame(corpus = c, model = m, pval = as.numeric(ptest$p.value)))
-  }
+    dll_npmi_comp = rbind(dll_npmi_comp, data.frame(lang = l, m=mean(dll_diff), pval = as.numeric(ptest$p.value)))
 }
 
+write.csv(dll_npmi_comp, "./images/meco_dll_npmi_comp.csv")
+  
 dll_npmi_comp 
 
 ```
@@ -372,12 +378,10 @@ dll_npmi_comp
 ## =============
 
 ```{r}
-  
-c_df = read.csv("./fits/agg_logistic_coeffs.csv")
 
-coeff_agg_df = c_df %>%
+coeff_agg_df = coeff_df %>%
   filter(term != "(Intercept)") %>%
-  group_by(term, corpus, model) %>%
+  group_by(term, lang) %>%
     summarise(
       m = mean(estimate), s = std.error(estimate),
       upper = m + 1.96 * s, lower = m - 1.96 * s
@@ -392,43 +396,28 @@ coeff_agg_df = c_df %>%
 
 coeff_agg_df %>%
   #mutate(ci = s * 1.96) %>%
-  filter(term != "dist") %>%
+  #filter(term != "dist") %>%
   #mutate(term = factor(term, levels = c("freq", "len", "surp", "max_surp", "max_pmi", "max_topkj", "max_topkji", "max_kld"), labels = c("Frequency", "Length", "Surprisal", "Max Surprisal", "Max PMI", "Max Top-K↑", "Max Top-k↓", "Max KLD"))) %>%
-  ggplot(aes(x = term, y = m, color = model, fill = model)) +
+  mutate(term = factor(term, levels = c("ppmi", "npmi", "e_ppmi", "e_npmi", "target_freq", "target_len", "target_surp", "trigger_freq", "trigger_len", "trigger_surp", "dist"),
+         labels = c("PPMI", "NPMI", "E[PPMI]", "E[NPMI]", "Frequency\n(Target)", "Length\n(Target)", "Surprisal\n(Target)", "Frequency\n(Source)", "Length\n(Source)", "Surprisal\n(Source)", "Distance" ))) %>%
+  ggplot(aes(x = lang, y = m, color = lang, fill = lang)) +
     geom_hline(yintercept = 0, color = "blue", alpha = 0.5, linetype = "dotted") +
-    geom_bar(stat = "identity", alpha=0.5, position = position_dodge(width = 0.9)) +
+    geom_bar(stat = "identity", alpha=0.5, position = position_dodge(width = 0.9)) + 
     geom_errorbar(aes(ymin = lower, ymax = upper), width = 0, position = position_dodge(width = 0.9)) +
     ylab("Coefficient Estimate") +
-    xlab("Coefficient Term") +
+    xlab("") +
   #scale_color_brewer( palette = "Set3") +
-  facet_grid(.~corpus, scales = "free_y") +
+  facet_grid(.~term, scales = "free_y") +
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text.x = element_text(angle = 45), 
     legend.position = "bottom"
   )
 
-ggsave("./images/logistic_coeffs.pdf", device = "pdf", width = 8 , height = 3.5)
+ggsave("./images/meco_coeffs.pdf", device = "pdf", width = 9 , height = 3.5)
 
 
 ```
 
-```{r}
-coeff_agg_df %>%
-  filter(term == "dist") %>%
-  #mutate(term = factor(term, levels = c("freq", "len", "surp", "max_surp", "max_pmi", "max_topkj", "max_topkji", "max_kld"), labels = c("Frequency", "Length", "Surprisal", "Max Surprisal", "Max PMI", "Max Top-K↑", "Max Top-k↓", "Max KLD"))) %>%
-  ggplot(aes(x = term, y = estimate, color = corpus, shape = model)) +
-    geom_hline(yintercept = 0, color = "blue", alpha = 0.5, linetype = "dotted") +
-    geom_jitter(size = 1, alpha = 0.2) +
-    #geom_errorbar(aes(ymin = lower, ymax = upper)) +
-    ylab("Coefficient Estimate") +
-    xlab("Coefficient Term") +
-  #facet_grid(.~model, scales = "free_y") +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none"
-  )
-
-```
 
 
 
