@@ -288,7 +288,7 @@ for (l in langs){
         dll2 = temp_df[temp_df$tag  == "Baseline",]$llh
         dll_diff = dll1 - dll2
         dll_diff = dll_diff[!is.na(dll_diff)]
-        ptest = perm.test(dll_diff, num.sim = 10)
+        ptest = perm.test(dll_diff, num.sim = 500)
         dll_df = rbind(dll_df, data.frame(dll_diff) %>% mutate(tag=tag1, lang = l, pval = as.numeric(ptest$p.value)))
       }
 }
@@ -398,22 +398,27 @@ coeff_agg_df %>%
   #mutate(ci = s * 1.96) %>%
   #filter(term != "dist") %>%
   #mutate(term = factor(term, levels = c("freq", "len", "surp", "max_surp", "max_pmi", "max_topkj", "max_topkji", "max_kld"), labels = c("Frequency", "Length", "Surprisal", "Max Surprisal", "Max PMI", "Max Top-K↑", "Max Top-k↓", "Max KLD"))) %>%
+  mutate(lang = factor(lang, levels = c("de", "es", "fi", "it", "tr"),
+         labels = c("German", "Spanish", "Finnish", "Italian", "Turkish"))) %>%
   mutate(term = factor(term, levels = c("ppmi", "npmi", "e_ppmi", "e_npmi", "target_freq", "target_len", "target_surp", "trigger_freq", "trigger_len", "trigger_surp", "dist"),
          labels = c("PPMI", "NPMI", "E[PPMI]", "E[NPMI]", "Frequency\n(Target)", "Length\n(Target)", "Surprisal\n(Target)", "Frequency\n(Source)", "Length\n(Source)", "Surprisal\n(Source)", "Distance" ))) %>%
   ggplot(aes(x = lang, y = m, color = lang, fill = lang)) +
     geom_hline(yintercept = 0, color = "blue", alpha = 0.5, linetype = "dotted") +
-    geom_bar(stat = "identity", alpha=0.5, position = position_dodge(width = 0.9)) + 
+    geom_bar(stat = "identity", alpha=0.5, width = 0.7, position = position_dodge(width = 0.9)) + 
     geom_errorbar(aes(ymin = lower, ymax = upper), width = 0, position = position_dodge(width = 0.9)) +
     ylab("Coefficient Estimate") +
     xlab("") +
   #scale_color_brewer( palette = "Set3") +
   facet_grid(.~term, scales = "free_y") +
+  labs (color="", fill="") +
   theme(
-    strip.text.x = element_text(angle = 45), 
+    strip.text.x = element_text(angle = 45),
+    axis.text.x = element_blank(),
+    #axis.text.x = element_text(angle = 45, hjust = 1),
     legend.position = "bottom"
   )
 
-ggsave("./images/meco_coeffs.pdf", device = "pdf", width = 9 , height = 3.5)
+ggsave("./images/meco_coeffs.pdf", device = "pdf", width = 9 , height = 4)
 
 
 ```

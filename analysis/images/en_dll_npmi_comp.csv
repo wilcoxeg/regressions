@@ -1,0 +1,10 @@
+"","corpus","model","pval"
+"1","provo","BERT-allRC",0
+"2","provo","BERT-maskRC",0
+"3","provo","BERT-dropRC",0
+"4","ucl","BERT-allRC",0.004
+"5","ucl","BERT-maskRC",0
+"6","ucl","BERT-dropRC",0.012
+"7","dundee","BERT-allRC",0.049
+"8","dundee","BERT-maskRC",0.023
+"9","dundee","BERT-dropRC",0.041

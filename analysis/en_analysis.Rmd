@@ -283,8 +283,8 @@ for(i in c(1:length(regression_forms))) {
       
       print(paste("<", c, m, tag, ">", sep="  "))
       
-      #result = model_cross_val_poisson(paste0("n_regressions", form), combined_df %>% filter(corpus == c, model == m), corpus = c, tag = tag)
-      result = model_cross_val_logistic(paste0("prop_subj", form), combined_df %>% filter(corpus == c, model == m), corpus = c, tag = tag)
+      result = model_cross_val_poisson(paste0("n_regressions", form), combined_df %>% filter(corpus == c, model == m), corpus = c, tag = tag)
+      #result = model_cross_val_logistic(paste0("prop_subj", form), combined_df %>% filter(corpus == c, model == m), corpus = c, tag = tag)
 
       
       preds = data.frame(result[1]) %>%
@@ -299,23 +299,16 @@ for(i in c(1:length(regression_forms))) {
   }
 }
 
-#write.csv(pred_df, "./fits/agg_poisson_preds.csv")
-#write.csv(coeff_df, "./fits/agg_poisson_coeffs.csv")
-
-write.csv(pred_df, "./fits/agg_logistic_preds.csv")
-write.csv(coeff_df, "./fits/agg_logistic_coeffs.csv")
-
+#write.csv(pred_df, "./fits/en_poisson_preds.csv")
+#write.csv(coeff_df, "./fits/en_poisson_coeffs.csv")
 
 ```
 
 
 ```{r}
 
-#pred_df = read.csv("./fits/agg_poisson_preds.csv")
-#coeff_df = read.csv("./fits/agg_poisson_coeffs.csv")
-
-pred_df = read.csv("./fits/agg_logistic_preds.csv")
-coeff_df = read.csv("./fits/agg_logistic_coeffs.csv")
+#pred_df = read.csv("./fits/en_poisson_preds.csv")
+#coeff_df = read.csv("./fits/en_poisson_coeffs.csv")
 
 tags = unique(pred_df$tag)
 dll_df = data.frame()
@@ -332,7 +325,7 @@ for (m in models){
         dll2 = temp_df[temp_df$tag  == "Baseline",]$llh
         dll_diff = dll1 - dll2
         dll_diff = dll_diff[!is.na(dll_diff)]
-        ptest = perm.test(dll_diff, num.sim = 10)
+        ptest = perm.test(dll_diff, num.sim = 500)
         dll_df = rbind(dll_df, data.frame(dll_diff) %>% mutate(tag=tag1, corpus = c, model = m, pval = as.numeric(ptest$p.value)))
       }
   }
@@ -362,33 +355,41 @@ plot_df = dll_df %>%
   ungroup()
   
 plot_df %>%
+  mutate(corpus = factor(corpus, levels = c("dundee", "provo", "ucl"),
+           labels = c("Dundee", "Provo", "UCL"))) %>%
+  mutate(sig = case_when( pval >= 0.05 ~ " ",
+                        pval < 0.05 & pval >= 0.01  ~ "*",
+                        pval < 0.01 & pval >= 0.001  ~ "**",
+                        pval < 0.001  ~ "***")) %>%
   ggplot(aes(x = tag, y=m, color = theory)) +
-    geom_hline(yintercept = 0, color = "#7cd82b", linetype="dashed") +
+    geom_hline(yintercept = 0, color = "black", linetype="dashed") +
     geom_point(size = 2) +
     geom_errorbar(aes(ymax = upper, ymin = lower), width = 0.4) +
+    geom_text(aes(label = sig, color = theory, y=case_when(corpus=="Dundee" ~ 0.0015, corpus =="Provo" ~ 0.11, corpus == "UCL"~0.035)), size = 3) +
+    # This is just some dummy whitespace to make the facet scales look nice.
+    geom_text(aes(label = "", y=case_when(corpus=="Dundee" ~ 0.0018, corpus =="Provo" ~ 0.115, corpus == "UCL"~0.038)), size = 1) +
     facet_grid(corpus~model, scales = "free_y") +
-    ylab("ΔLogLik") +
+    ylab("Delta LogLik") +
     labs(color="") +
     #scale_color_manual(values=c("#8277BB", "#BB7A74")) +
     #ggtitle("Regression Count Between Words") +
     theme(
       axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
       axis.title.x = element_blank(),
-      axis.text.y = element_text(angle = 90, hjust = 0.5),
-      legend.position = "right"
+      axis.text.y = element_text(),
+      legend.position = "none"
     )
 
 #ggsave("./images/agg_poisson.pdf", device="pdf", width = 8, height = 4)
-ggsave("./images/agg_binom.pdf", device="pdf", width = 8, height = 4)
+ggsave("./images/en_results.pdf", device="pdf", width = 8, height = 4.5)
 
 ```
+
 ```{r}
 
 # This block looks at the comparison of NPMI and E[NPMI] to see if the expectation is performing significantly better here
 
 #pred_df = read.csv("./fits/agg_poisson_preds.csv")
-
-pred_df = read.csv("./fits/agg_logistic_preds.csv")
 
 dll_npmi_comp = data.frame()
 
@@ -404,6 +405,8 @@ for (c in corpora){
   }
 }
 
+write.csv(dll_npmi_comp, "./images/en_dll_npmi_comp.csv")
+
 dll_npmi_comp 
 
 ```
@@ -414,9 +417,9 @@ dll_npmi_comp
 
 ```{r}
   
-c_df = read.csv("./fits/agg_logistic_coeffs.csv")
+#c_df = read.csv("./fits/agg_logistic_coeffs.csv")
 
-coeff_agg_df = c_df %>%
+coeff_agg_df = coeff_df %>%
   filter(term != "(Intercept)") %>%
   group_by(term, corpus, model) %>%
     summarise(
@@ -434,21 +437,22 @@ coeff_agg_df = c_df %>%
 coeff_agg_df %>%
   #mutate(ci = s * 1.96) %>%
   filter(term != "dist") %>%
-  #mutate(term = factor(term, levels = c("freq", "len", "surp", "max_surp", "max_pmi", "max_topkj", "max_topkji", "max_kld"), labels = c("Frequency", "Length", "Surprisal", "Max Surprisal", "Max PMI", "Max Top-K↑", "Max Top-k↓", "Max KLD"))) %>%
-  ggplot(aes(x = term, y = m, color = model, fill = model)) +
-    geom_hline(yintercept = 0, color = "blue", alpha = 0.5, linetype = "dotted") +
-    geom_bar(stat = "identity", alpha=0.5, position = position_dodge(width = 0.9)) +
-    geom_errorbar(aes(ymin = lower, ymax = upper), width = 0, position = position_dodge(width = 0.9)) +
+  mutate(term = factor(term, levels = c("ppmi", "npmi", "e_ppmi", "e_npmi", "target_freq", "target_len", "target_surp", "trigger_freq", "trigger_len", "trigger_surp", "dist"),
+         labels = c("PPMI", "NPMI", "E[PPMI]", "E[NPMI]", "Frequency\n(Target)", "Length\n(Target)", "Surprisal\n(Target)", "Frequency\n(Source)", "Length\n(Source)", "Surprisal\n(Source)",           "Distance" ))) %>%  
+  ggplot(aes(x = model, y = m, color = model, fill = model)) +
+    geom_bar(stat = "identity", alpha=0.5, width=0.8, position = position_dodge(width = 0.8)) +
+    geom_errorbar(aes(ymin = lower, ymax = upper), width = 0, position = position_dodge(width = 0.8)) +
+    geom_hline(yintercept = 0, color = "black", alpha=0.5) +
     ylab("Coefficient Estimate") +
-    xlab("Coefficient Term") +
-  #scale_color_brewer( palette = "Set3") +
-  facet_grid(.~corpus, scales = "free_y") +
+    xlab("") + 
+  #scale_color_brewer( palette = " Set3") +
+  facet_grid(corpus~term, scales = "free_y") +
   theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.x = element_blank(),
     legend.position = "bottom"
   )
 
-ggsave("./images/logistic_coeffs.pdf", device = "pdf", width = 8 , height = 3.5)
+ggsave("./images/en_coeffs.pdf", device = "pdf", width = 8 , height = 4)
 
 
 ```
