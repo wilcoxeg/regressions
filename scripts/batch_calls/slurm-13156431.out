@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "../get_predictors.py", line 294, in <module>
+    main()
+  File "../get_predictors.py", line 284, in main
+    get_stats(args.dataset, args.input_path, args.mlm_model, args.ar_model, args.language, args.mask_type)
+  File "../get_predictors.py", line 262, in get_stats
+    pairwise_stats = get_pairwise_stats(split_sent, text_id, sent_id, mlm_model, ar_surps, freqs, mask_type)
+  File "../get_predictors.py", line 166, in get_pairwise_stats
+    tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
+  File "/cluster/scratch/ewilcox/regressions/lib/python3.7/site-packages/transformers/tokenization_utils_base.py", line 1789, in from_pretrained
+    f"Can't load tokenizer for '{pretrained_model_name_or_path}'. If you were trying to load it from "
+OSError: Can't load tokenizer for 'bert-base-uncased'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'bert-base-uncased' is the correct path to a directory containing all relevant files for a BertTokenizer tokenizer.
