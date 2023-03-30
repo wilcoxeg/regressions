@@ -151,7 +151,8 @@ combined_df = combined_df %>%
     corpus == "provo" ~ n_subjs / 84,
     corpus == "dundee" ~ n_subjs / 10
   )) %>%
-  drop_na()
+  drop_na() %>%
+  filter(is_multitok == "False")
 combined_df
 
 ```
@@ -180,8 +181,8 @@ combined_df %>%
 ```{r}
 
 m_pmi = combined_df %>%
-  filter(model == "BERT-maskRC", corpus == "provo") %>%
-  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + pmi + e_pmi", data = ., family = poisson())
+  filter(model == "BERT-maskRC", corpus == "ucl") %>%
+  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + pmi + e_npmi", data = ., family = poisson())
 summary(m_pmi)
 
 m_pmi = combined_df %>%
@@ -421,17 +422,17 @@ dll_npmi_comp
 
 coeff_agg_df = coeff_df %>%
   filter(term != "(Intercept)") %>%
+  mutate(f1 = if_else(term %in% c("freq", "len", "surp"), 1, 0),
+         f2 = if_else(tag == "Baseline", 1, 0),
+         x = if_else(f1 == 1 & f2 == 0, 1, 0)) %>%
+  filter(x != 1) %>%
+  dplyr::select(-f1, -f2, -x) %>%
   group_by(term, corpus, model) %>%
     summarise(
       m = mean(estimate), s = std.error(estimate),
       upper = m + 1.96 * s, lower = m - 1.96 * s
     ) %>%
-  ungroup() %>%
-  mutate(f1 = if_else(term %in% c("freq", "len", "surp"), 1, 0),
-         f2 = if_else(tag == "Baseline", 1, 0),
-         x = if_else(f1 == 1 & f2 == 0, 1, 0)) %>%
-  filter(x != 1) %>%
-  dplyr::select(-f1, -f2, -x)
+  ungroup()
 
 
 coeff_agg_df %>%
