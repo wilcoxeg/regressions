@@ -69,14 +69,44 @@ meco_agg_regressions = meco_sacc_df %>%
 meco_df = meco_pairwise_df %>%
   mutate(text_id = text_id + 1, sent_id = sent_id + 1) %>%
   merge(meco_agg_regressions, by=c("text_id", "sent_id", "trigger_idx", "target_idx", "lang")) %>%
-  mutate(corpus = "meco")
+  mutate(corpus = "meco") %>%
+  
+  # Filter out sentence-final words because of wrap-up effects
+  mutate(dist = trigger_idx-target_idx) %>%
+  group_by(lang, text_id, sent_id) %>%
+    mutate(max_idx = max(unique(trigger_idx))) %>%
+  ungroup() %>%
+  mutate(is_max = trigger_idx == max_idx) %>%
+  filter(is_max == F)
 
 meco_df %>%
   arrange(lang, text_id, sent_id, trigger_idx, target_idx)
 
-table(meco_df$lang)
 
 ```
+
+```{r}
+meco_df %>%
+  mutate(dist = trigger_idx-target_idx) %>%
+  group_by(lang, text_id, sent_id) %>%
+    mutate(max_idx = max(unique(trigger_idx))) %>%
+  ungroup() %>%
+  mutate(is_max = trigger_idx == max_idx) %>%
+  group_by(is_max) %>%
+    summarise(m_regress = mean(n_regressions),
+              m_dist = mean(dist)) %>%
+  ungroup()
+  
+  mutate(dist = trigger_idx - target_idx) %>%
+  ggplot(aes(x=dist)) +
+  geom_density() +
+  facet_wrap(.~lang)
+
+meco_df %>%
+  arrange(lang, text_id, sent_id, trigger_idx)
+
+```
+
 
 ```{r}
 
@@ -135,13 +165,8 @@ combined_df %>%
 ```{r}
 
 m_pmi = combined_df %>%
-  filter(model == "BERT-maskRC", corpus == "provo") %>%
-  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + pmi + e_pmi", data = ., family = poisson())
-summary(m_pmi)
-
-m_pmi = combined_df %>%
-  filter(model == "BERT-dropRC", corpus == "provo") %>%
-  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + pmi + e_pmi", data = ., family = poisson())
+  filter(lang == "it") %>%
+  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + ppmi + e_ppmi + npmi + e_npmi", data = ., family = poisson())
 summary(m_pmi)
 
 ```
@@ -327,8 +352,8 @@ plot_df %>%
     geom_hline(yintercept = 0, color = "black", linetype="dashed") +
     geom_point(size = 2) +
     geom_errorbar(aes(ymax = upper, ymin = lower), width = 0.4) +
-    geom_text(aes(label = sig, color = theory), y = 0.095, size = 3, angle = 45) +
-    facet_grid(.~lang, scales = "free_y") +
+    geom_text(aes(label = sig, color = theory), y = 0.13, size = 3, angle = 0) +
+    facet_wrap(.~lang) +
     ylab("Delta LogLik") +
     labs(color="") +
     #scale_color_viridis(discrete = TRUE, option = "D") +
@@ -341,8 +366,7 @@ plot_df %>%
       legend.position = "none"
     )
 
-ggsave("./images/meco_results.pdf", device="pdf", width = 8, height = 4)
-#ggsave("./images/agg_meco.pdf", device="pdf", width = 8, height = 4)
+ggsave("./images/meco_results.pdf", device="pdf", width = 8, height = 5)
 
 ```
 
@@ -396,7 +420,7 @@ coeff_agg_df = coeff_df %>%
 
 coeff_agg_df %>%
   #mutate(ci = s * 1.96) %>%
-  #filter(term != "dist") %>%
+  filter(term != "dist") %>%
   #mutate(term = factor(term, levels = c("freq", "len", "surp", "max_surp", "max_pmi", "max_topkj", "max_topkji", "max_kld"), labels = c("Frequency", "Length", "Surprisal", "Max Surprisal", "Max PMI", "Max Top-K↑", "Max Top-k↓", "Max KLD"))) %>%
   mutate(lang = factor(lang, levels = c("de", "es", "fi", "it", "tr"),
          labels = c("German", "Spanish", "Finnish", "Italian", "Turkish"))) %>%

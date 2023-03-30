@@ -357,7 +357,7 @@ write.csv(sacc_df, "../data/harmonized_results/ucl_saccades_df.csv")
 
 ```{r}
 
-dundee_df = read_csv("../data/dundee/dundee_text.csv") %>%
+dundee_df = read_csv("../../../resources/regressions_resources/dundee/dundee_text.csv") %>%
   dplyr::select(-`...1`)
 
 ```

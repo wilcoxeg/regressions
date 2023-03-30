@@ -123,12 +123,24 @@ dundee_df = dundee_pairwise_df %>%
 
 ```
 
+
+
 ```{r}
 
 combined_df = data.frame()
 combined_df = rbind(combined_df, provo_df)
 combined_df = rbind(combined_df, ucl_df)
-combined_df = rbind(combined_df, dundee_df)
+combined_df = rbind(combined_df, dundee_df)%>%
+
+  # Filter out sentence-final words because of wrap-up effects
+  mutate(dist = trigger_idx-target_idx) %>%
+  group_by(model, corpus, text_id, sent_id) %>%
+    mutate(max_idx = max(unique(trigger_idx))) %>%
+  ungroup() %>%
+  mutate(is_max = trigger_idx == max_idx) %>%
+  filter(is_max == F)
+  
+  
 combined_df = combined_df %>%
   mutate(n_regressions = if_else(is.na(n_regressions), 0, as.double(n_regressions)),
          n_subjs = if_else(is.na(n_subjs), 0, as.double(n_subjs)),
@@ -138,7 +150,7 @@ combined_df = combined_df %>%
          trigger_surp = scale(trigger_surp),
          trigger_len = scale(trigger_len),
          trigger_freq = scale(trigger_freq),
-         
+        
          pmi = scale(pmi),
          ppmi = scale(ppmi),
          npmi = scale(npmi), # So 
@@ -181,13 +193,8 @@ combined_df %>%
 ```{r}
 
 m_pmi = combined_df %>%
-  filter(model == "BERT-maskRC", corpus == "ucl") %>%
-  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + pmi + e_npmi", data = ., family = poisson())
-summary(m_pmi)
-
-m_pmi = combined_df %>%
   filter(model == "BERT-dropRC", corpus == "provo") %>%
-  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + pmi + e_pmi", data = ., family = poisson())
+  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + ppmi + e_ppmi + npmi + e_npmi", data = ., family = poisson())
 summary(m_pmi)
 
 ```
@@ -366,9 +373,9 @@ plot_df %>%
     geom_hline(yintercept = 0, color = "black", linetype="dashed") +
     geom_point(size = 2) +
     geom_errorbar(aes(ymax = upper, ymin = lower), width = 0.4) +
-    geom_text(aes(label = sig, color = theory, y=case_when(corpus=="Dundee" ~ 0.0015, corpus =="Provo" ~ 0.11, corpus == "UCL"~0.035)), size = 3) +
+    geom_text(aes(label = sig, color = theory, y=case_when(corpus=="Dundee" ~ 0.0011, corpus =="Provo" ~ 0.09, corpus == "UCL"~0.015)), size = 3) +
     # This is just some dummy whitespace to make the facet scales look nice.
-    geom_text(aes(label = "", y=case_when(corpus=="Dundee" ~ 0.0018, corpus =="Provo" ~ 0.115, corpus == "UCL"~0.038)), size = 1) +
+    geom_text(aes(label = "", y=case_when(corpus=="Dundee" ~ 0.00115, corpus =="Provo" ~ 0.095, corpus == "UCL"~0.0155)), size = 1) +
     facet_grid(corpus~model, scales = "free_y") +
     ylab("Delta LogLik") +
     labs(color="") +
