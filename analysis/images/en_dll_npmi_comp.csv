@@ -4,7 +4,7 @@
 "3","provo","BERT-dropRC",0
 "4","ucl","BERT-allRC",0.004
 "5","ucl","BERT-maskRC",0
-"6","ucl","BERT-dropRC",0.014
-"7","dundee","BERT-allRC",0.16
-"8","dundee","BERT-maskRC",0.045
-"9","dundee","BERT-dropRC",0.274
+"6","ucl","BERT-dropRC",0.009
+"7","dundee","BERT-allRC",0.049
+"8","dundee","BERT-maskRC",0.027
+"9","dundee","BERT-dropRC",0.053

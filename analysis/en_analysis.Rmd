@@ -119,7 +119,8 @@ dundee_df = dundee_pairwise_df %>%
   rename(model = mask_type) %>%
   mutate(model = case_when(model == "none" ~ "BERT-allRC", model == "mask" ~ "BERT-maskRC", model == "truncate" ~ "BERT-dropRC"))
 # Currently, this includes information for when regressions happen in text IDs 4-n. Drop this below
-  
+
+table(dundee_df$text_id)
 
 ```
 
@@ -130,16 +131,7 @@ dundee_df = dundee_pairwise_df %>%
 combined_df = data.frame()
 combined_df = rbind(combined_df, provo_df)
 combined_df = rbind(combined_df, ucl_df)
-combined_df = rbind(combined_df, dundee_df)%>%
-
-  # Filter out sentence-final words because of wrap-up effects
-  mutate(dist = trigger_idx-target_idx) %>%
-  group_by(model, corpus, text_id, sent_id) %>%
-    mutate(max_idx = max(unique(trigger_idx))) %>%
-  ungroup() %>%
-  mutate(is_max = trigger_idx == max_idx) %>%
-  filter(is_max == F)
-  
+combined_df = rbind(combined_df, dundee_df)
   
 combined_df = combined_df %>%
   mutate(n_regressions = if_else(is.na(n_regressions), 0, as.double(n_regressions)),
@@ -165,26 +157,8 @@ combined_df = combined_df %>%
   )) %>%
   drop_na() %>%
   filter(is_multitok == "False")
+
 combined_df
-
-```
-
-```{r}
-
-combined_df %>%
-  mutate(pmi_sign = if_else(pmi > 0, "Pos", "Neg")) %>%
-  group_by(corpus, pmi_sign) %>%
-    summarise(n = n()) %>%
-  ungroup()
-
-combined_df %>%
-  drop_na() %>%
-  ggplot(aes(x=pmi, y=prop_subj)) +
-    stat_smooth() +
-    coord_cartesian(ylim = c(0, 0.09)) +
-    ylab("Proportion of Subjects who Regress") +
-    xlab("PMI Between Word Pair") +
-    facet_grid(model~corpus)
 
 ```
 
@@ -373,9 +347,9 @@ plot_df %>%
     geom_hline(yintercept = 0, color = "black", linetype="dashed") +
     geom_point(size = 2) +
     geom_errorbar(aes(ymax = upper, ymin = lower), width = 0.4) +
-    geom_text(aes(label = sig, color = theory, y=case_when(corpus=="Dundee" ~ 0.0011, corpus =="Provo" ~ 0.09, corpus == "UCL"~0.015)), size = 3) +
+    geom_text(aes(label = sig, color = theory, y=case_when(corpus=="Dundee" ~ 0.0015, corpus =="Provo" ~ 0.1, corpus == "UCL"~0.031)), size = 3) +
     # This is just some dummy whitespace to make the facet scales look nice.
-    geom_text(aes(label = "", y=case_when(corpus=="Dundee" ~ 0.00115, corpus =="Provo" ~ 0.095, corpus == "UCL"~0.0155)), size = 1) +
+    geom_text(aes(label = "", y=case_when(corpus=="Dundee" ~ 0.00155, corpus =="Provo" ~ 0.11, corpus == "UCL"~0.033)), size = 1) +
     facet_grid(corpus~model, scales = "free_y") +
     ylab("Delta LogLik") +
     labs(color="") +
