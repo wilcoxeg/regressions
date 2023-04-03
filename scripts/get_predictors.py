@@ -250,8 +250,8 @@ def get_pairwise_stats(split_sent, text_id, sent_id, mlm_model, ar_surps, freqs,
 
 def get_stats(dataset, input_path, mlm_model, ar_model, language, mask_type):
     
-    sents = pd.read_csv(input_path)
-    #sents = pd.read_csv(input_path)[1:]
+    #sents = pd.read_csv(input_path)
+    sents = pd.read_csv(input_path)[464:]
     #sents = pd.read_csv(DATA_PATH)[50:101]
     #sents = pd.read_csv(DATA_PATH)[100:]
 
