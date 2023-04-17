@@ -163,11 +163,11 @@ def get_mask(split_sent, mt, j, i, mask_idxs):
 
 def get_pairwise_stats(split_sent, text_id, sent_id, mlm_model, ar_surps, freqs, mask_type):
     
-    #tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
-    #model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
+    tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
+    model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
 
-    tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model])
-    model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model])
+    #tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model])
+    #model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model])
     
     model.eval()
 
@@ -251,8 +251,8 @@ def get_pairwise_stats(split_sent, text_id, sent_id, mlm_model, ar_surps, freqs,
 
 def get_stats(dataset, input_path, mlm_model, ar_model, language, mask_type):
     
-    #sents = pd.read_csv(input_path)
-    sents = pd.read_csv(input_path)[464:]
+    sents = pd.read_csv(input_path)
+    #sents = pd.read_csv(input_path)[497:]
     #sents = pd.read_csv(DATA_PATH)[50:101]
     #sents = pd.read_csv(DATA_PATH)[100:]
 
