@@ -74,16 +74,16 @@ meco_agg_regressions = meco_sacc_df %>%
 meco_df = meco_pairwise_df %>%
   mutate(text_id = text_id + 1, sent_id = sent_id + 1) %>%
   merge(meco_agg_regressions, by=c("text_id", "sent_id", "trigger_idx", "target_idx", "lang")) %>%
-  mutate(corpus = "meco") #%>%
+  mutate(corpus = "meco") %>%
   
   # For wrap-up effects analysis --> Filter out final words of sentences
   #mutate(dist = trigger_idx-target_idx) %>%
   #group_by(lang, text_id, sent_id) %>%
-    #mutate(max_idx = max(unique(trigger_idx))) %>%
+  #  mutate(max_idx = max(unique(trigger_idx))) %>%
   #ungroup() %>%
   #mutate(is_max = trigger_idx == max_idx) %>%
   #filter(is_max == F) %>%
-  #distinct()
+  distinct()
 
 
 meco_df %>%
@@ -144,36 +144,6 @@ combined_df
 
 ```
 
-```{r}
-
-combined_df %>%
-  mutate(pmi_sign = if_else(pmi > 0, "Pos", "Neg")) %>%
-  group_by(lang, pmi_sign) %>%
-    summarise(n = n()) %>%
-  ungroup()
-
-combined_df %>%
-  drop_na() %>%
-  filter(trigger_idx > 6) %>%
-  filter(target_idx > 6) %>%
-  ggplot(aes(x=pmi, y=prop_subj)) +
-    stat_smooth() +
-    ylab("Proportion of Subjects who Regress") +
-    xlab("PMI Between Word Pair") +
-    facet_grid(.~lang)
-
-```
-
-
-## Regression Analysis
-```{r}
-
-m_pmi = combined_df %>%
-  filter(lang == "it") %>%
-  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + npmi + ppmi", data = ., family = poisson())
-summary(m_pmi)
-
-```
 
 
 ```{r}
@@ -330,17 +300,17 @@ for (l in langs){
 
 ```{r}
 # This block looks at the comparison of NPMI and E[NPMI] to see if the expectation is performing significantly better here
-dll_epmi_ens_comp = data.frame()
+dll_npmi_comp = data.frame()
 for (l in langs){
     temp_df = pred_df %>% filter(lang == l)
-    dll1 = temp_df[temp_df$tag  == "E[PPMI]+E[NPMI]",]$llh
-    dll2 = temp_df[temp_df$tag  == "E[NPMI]",]$llh
+    dll1 = temp_df[temp_df$tag  == "E[NPMI]",]$llh
+    dll2 = temp_df[temp_df$tag  == "NPMI",]$llh
     dll_diff = dll1 - dll2
     dll_diff = dll_diff[!is.na(dll_diff)]
     ptest = perm.test(dll_diff, num.sim = 500)
-    dll_epmi_ens_comp = rbind(dll_epmi_ens_comp, data.frame(lang = l, epmi_ens_m=mean(dll_diff), epmi_ens_pval = as.numeric(ptest$p.value)))
+    dll_npmi_comp = rbind(dll_npmi_comp, data.frame(lang = l, npmi_m=mean(dll_diff), npmi_pval = as.numeric(ptest$p.value)))
 }
-dll_epmi_ens_comp 
+dll_npmi_comp 
 ```
 
 ```{r}
@@ -388,9 +358,7 @@ plot_df %>%
   mutate(lang = factor(lang, levels = c("de", "es", "fi", "it", "tr"),
          labels = c("German", "Spanish", "Finnish", "Italian", "Turkish"))) %>%
   mutate(sig = pval_func(pval),
-         pmi_ens_pval = pval_func(pmi_ens_pval),
-         epmi_ens_pval = pval_func(epmi_ens_pval),
-         npi_pval = pval_func(npi_pval)) %>%
+         npmi_pval = pval_func(npmi_pval)) %>%
   ggplot(aes(x = tag, y=m, color = theory, fill = theory)) +
     #geom_point(size = 2) +
     geom_bar(stat="identity", alpha=0.5) +
@@ -398,13 +366,13 @@ plot_df %>%
     geom_text(aes(label = sig, color = theory, y = y_max + y_step * 4), size = 3, angle = 0) +
   
     # NPMI vs. E[NPMI] Comparison plotting
-    geom_segment(aes(y = y_max + 1 * y_step, yend = y_max + 13 * y_step), size =0.5, x = 1.95, xend = 5.05, color="gray", alpha=0.4) +
-    geom_text(aes(label = npi_pval, y = y_max + y_step * 1.5, x = 3.5), size = 3, angle = 0, color = "gray", alpha=0.2) +
+    geom_segment(aes(y = y_max + 1 * y_step, yend = y_max + 1 * y_step), size =0.5, x = 1.95, xend = 5.05, color="gray", alpha=0.4) +
+    geom_text(aes(label = npmi_pval, y = y_max + y_step * 1.5, x = 3.5), size = 3, angle = 0, color = "gray", alpha=0.2) +
   
   
     geom_hline(yintercept = 0, color = "black", linetype="dashed") +
     #geom_text(aes(label = ""), y=0.12, size = 1) +
-    facet_wrap(.~lang) +
+    facet_wrap(.~lang, nrow=2) +
     #coord_cartesian(ylim=c(-0.03, 0.21)) +
     ylab("Delta LogLik") +
     labs(color="") +

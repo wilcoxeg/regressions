@@ -25,7 +25,8 @@ MODEL_NAME = {
     "bert-de" : "bert-base-german-cased",
     "bert-sp" : "dccuchile/bert-base-spanish-wwm-cased",
     "bert-fi" : "TurkuNLP/bert-base-finnish-cased-v1",
-    "bert-nl" : "GroNLP/bert-base-dutch-cased"
+    "bert-nl" : "GroNLP/bert-base-dutch-cased",
+    "bert-ru" : "DeepPavlov/rubert-base-cased"
 }
 
 MODEL_TO_SPECIAL_TOKENS = {
