@@ -131,7 +131,9 @@ table(dundee_df$text_id)
 combined_df = data.frame()
 combined_df = rbind(combined_df, provo_df)
 combined_df = rbind(combined_df, ucl_df)
-combined_df = rbind(combined_df, dundee_df)
+combined_df = rbind(combined_df, dundee_df) %>%
+  distinct()
+  
   
 combined_df = combined_df %>%
   mutate(n_regressions = if_else(is.na(n_regressions), 0, as.double(n_regressions)),
@@ -164,7 +166,7 @@ combined_df
 
 
 ## Logistic Regression Analysis
-```{r}
+```{r, eval = FALSE}
 
 m_pmi = combined_df %>%
   filter(model == "BERT-dropRC", corpus == "provo") %>%
@@ -187,7 +189,7 @@ model_cross_val_poisson = function(form, df, corpus, tag, num_folds=10){
     testData = df[testIndexes,]
     trainData = df[-testIndexes,]
 
-    model = glm(as.formula(form), data = trainData, family = poisson())
+    model = glm(as.formula(form), data = trainData, family = "quasipoisson")
     
     preds = testData %>% dplyr::select(n_regressions) %>% rename(y=n_regressions) %>% 
       mutate(pred = predict(model, newdata = testData)) %>% 
@@ -318,6 +320,26 @@ for (m in models){
 
 
 
+
+```{r}
+# This block looks at the comparison of NPMI and E[NPMI] to see if the expectation is performing significantly better here
+dll_epmi_ens_comp = data.frame()
+for (c in corpora){
+  print(c)
+for (m in models){
+  temp_df = pred_df %>% filter(corpus == c, model == m)
+    dll1 = temp_df[temp_df$tag  == "E[PPMI]+E[NPMI]",]$llh
+    dll2 = temp_df[temp_df$tag  == "E[NPMI]",]$llh
+    dll_diff = dll1 - dll2
+    dll_diff = dll_diff[!is.na(dll_diff)]
+    ptest = perm.test(dll_diff, num.sim = 500)
+    dll_epmi_ens_comp = rbind(dll_epmi_ens_comp, data.frame(corpus = c, model = m, epmi_ens_m=mean(dll_diff), epmi_ens_pval = as.numeric(ptest$p.value)))
+}}
+dll_epmi_ens_comp 
+
+```
+
+
 ```{r}
 
 plot_df = dll_df %>%
@@ -334,27 +356,57 @@ plot_df = dll_df %>%
               upper = m + s * 1.96,
               lower = m - s * 1.96,
               pval = unique(pval)) %>%
-  ungroup()
+  ungroup() %>%
+  group_by(corpus, model) %>%
+    mutate(y_max = max(upper)) %>%
+  ungroup()%>%
+  group_by(corpus) %>%
+    mutate(y_step = max(upper) / 10) %>%
+  ungroup() %>%
+  merge(., dll_npmi_comp, by=c("corpus", "model"))
+
+plot_df
+
+```
+
+```{r}
+pval_func = function(pval) {
+  if_else(pval >= 0.05 , " ",
+          if_else(pval < 0.05 & pval >= 0.01, "*",
+                  if_else(pval < 0.01 & pval >= 0.001, "**",
+                          if_else(pval < 0.001,
+                                  "***",""))))
+}
+
+```
+
+
+```{r}
   
 plot_df %>%
   mutate(corpus = factor(corpus, levels = c("dundee", "provo", "ucl"),
            labels = c("Dundee", "Provo", "UCL"))) %>%
-  mutate(sig = case_when( pval >= 0.05 ~ " ",
-                        pval < 0.05 & pval >= 0.01  ~ "*",
-                        pval < 0.01 & pval >= 0.001  ~ "**",
-                        pval < 0.001  ~ "***")) %>%
-  ggplot(aes(x = tag, y=m, color = theory)) +
+  mutate(sig = pval_func(pval),
+         npi_pval = pval_func(npi_pval)) %>%
+  ggplot(aes(x = tag, y=m, color = theory, fill=theory)) +
+    geom_bar(stat="identity", alpha=0.5) +
+    geom_errorbar(aes(ymax = upper, ymin = lower), width = 0) +
+    geom_text(aes(label = sig, color = theory, y = y_max + y_step * 4), size = 3, angle = 0) +
+    geom_text(aes(label = " ", color = theory, y = y_max + y_step * 5), size = 3, angle = 0) +
+    geom_text(aes(label = " ", color = theory, y = 0 - y_step * 1), size = 3, angle = 0) +
+  
+    # NPMI vs. E[NPMI] Comparison plotting
+    geom_segment(aes(y = y_max + 1 * y_step, yend = y_max + 1 * y_step), size =0.5, x = 1.95, xend = 5.05, color="gray", alpha=0.4) +
+    geom_text(aes(label = npi_pval, y = y_max + y_step * 1.5), size = 3,  x = 3.5, angle = 0, color = "gray", alpha=0.4) +
+  
+  
     geom_hline(yintercept = 0, color = "black", linetype="dashed") +
-    geom_point(size = 2) +
-    geom_errorbar(aes(ymax = upper, ymin = lower), width = 0.4) +
-    geom_text(aes(label = sig, color = theory, y=case_when(corpus=="Dundee" ~ 0.0015, corpus =="Provo" ~ 0.1, corpus == "UCL"~0.031)), size = 3) +
-    # This is just some dummy whitespace to make the facet scales look nice.
-    geom_text(aes(label = "", y=case_when(corpus=="Dundee" ~ 0.00155, corpus =="Provo" ~ 0.11, corpus == "UCL"~0.033)), size = 1) +
     facet_grid(corpus~model, scales = "free_y") +
     ylab("Delta LogLik") +
     labs(color="") +
-    #scale_color_manual(values=c("#8277BB", "#BB7A74")) +
-    #ggtitle("Regression Count Between Words") +
+    scale_color_manual(values=c("#39ccbd", "#3991cc")) +
+    scale_fill_manual(values=c("#39ccbd", "#3991cc")) +    
+  #ggtitle("Regression Count Between Words") +
     theme(
       axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
       axis.title.x = element_blank(),
@@ -362,36 +414,10 @@ plot_df %>%
       legend.position = "none"
     )
 
-#ggsave("./images/agg_poisson.pdf", device="pdf", width = 8, height = 4)
 ggsave("./images/en_results.pdf", device="pdf", width = 8, height = 4.5)
 
 ```
 
-```{r}
-
-# This block looks at the comparison of NPMI and E[NPMI] to see if the expectation is performing significantly better here
-
-#pred_df = read.csv("./fits/agg_poisson_preds.csv")
-
-dll_npmi_comp = data.frame()
-
-for (c in corpora){
-  for (m in models){
-    temp_df = pred_df %>% filter(corpus == c, model == m)
-    dll1 = temp_df[temp_df$tag  == "E[NPMI]",]$llh
-    dll2 = temp_df[temp_df$tag  == "NPMI",]$llh
-    dll_diff = dll1 - dll2
-    dll_diff = dll_diff[!is.na(dll_diff)]
-    ptest = perm.test(dll_diff, num.sim = 1000)
-    dll_npmi_comp = rbind(dll_npmi_comp, data.frame(corpus = c, model = m, pval = as.numeric(ptest$p.value)))
-  }
-}
-
-write.csv(dll_npmi_comp, "./images/en_dll_npmi_comp.csv")
-
-dll_npmi_comp 
-
-```
 
 ## ============
 ## Coefficients 
@@ -403,11 +429,11 @@ dll_npmi_comp
 
 coeff_agg_df = coeff_df %>%
   filter(term != "(Intercept)") %>%
-  mutate(f1 = if_else(term %in% c("freq", "len", "surp"), 1, 0),
-         f2 = if_else(tag == "Baseline", 1, 0),
-         x = if_else(f1 == 1 & f2 == 0, 1, 0)) %>%
-  filter(x != 1) %>%
-  dplyr::select(-f1, -f2, -x) %>%
+  #mutate(baseline_stat = if_else(term %in% c("freq", "len", "surp"), T, F),
+         #baseline_model = if_else(tag == "Baseline", T, F),
+         #match = if_else(baseline_stat == baseline_model, T, F)) %>%
+  #filter(match == T) %>%
+  #dplyr::select(-baseline_stat, -baseline_model, -match) %>%
   group_by(term, corpus, model) %>%
     summarise(
       m = mean(estimate), s = std.error(estimate),
@@ -439,7 +465,7 @@ ggsave("./images/en_coeffs.pdf", device = "pdf", width = 8 , height = 4)
 
 ```
 
-```{r}
+```{r, eval = FALSE}
 coeff_agg_df %>%
   filter(term == "dist") %>%
   #mutate(term = factor(term, levels = c("freq", "len", "surp", "max_surp", "max_pmi", "max_topkj", "max_topkji", "max_kld"), labels = c("Frequency", "Length", "Surprisal", "Max Surprisal", "Max PMI", "Max Top-K↑", "Max Top-k↓", "Max KLD"))) %>%

@@ -1,1 +1,0 @@
-,text_id,sent_id,trigger_idx,trigger,trigger_len,trigger_freq,trigger_surp,target_idx,target,target_len,target_freq,target_surp,ji_surp,j_surp,pmi,e_pmi,e_ppmi,e_npmi,e_pmi_i,e_ppmi_i,e_npmi_i,is_multitok,top_j_preds,top_ji_preds,mask_type

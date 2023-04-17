@@ -36,6 +36,7 @@ options(digits=4)
 options(dplyr.summarise.inform = FALSE)
 set.seed(444)
 options(scipen=999)
+
 ```
 
 
@@ -46,6 +47,10 @@ options(scipen=999)
 meco_pairwise_df = read.csv("../data/harmonized_results/meco_pairwise_stats_df.csv")
 meco_sacc_df = read.csv("../data/harmonized_results/meco_saccades_df.csv")
 
+```
+
+```{r}
+
 meco_agg_regressions = meco_sacc_df %>%
   mutate(next_ia_idx = as.numeric(next_ia_idx), prev_ia_idx = as.numeric(prev_ia_idx)) %>%
   drop_na() %>%
@@ -54,7 +59,7 @@ meco_agg_regressions = meco_sacc_df %>%
     mutate(total_subj = length(unique(subj))) %>%
   ungroup() %>%
   group_by(text_id, sent_id, curr_ia_idx, next_ia_idx, lang) %>%
-    summarise(n_regressions = n(), n_subjs = length(unique(subj)), prop_subj = n_subjs / total_subj ) %>%
+    summarise(n_regressions = n() ) %>%
   ungroup() %>%
   rename(
     trigger_idx = curr_ia_idx,
@@ -74,14 +79,35 @@ meco_df = meco_pairwise_df %>%
   # For wrap-up effects analysis --> Filter out final words of sentences
   #mutate(dist = trigger_idx-target_idx) %>%
   #group_by(lang, text_id, sent_id) %>%
-  #  mutate(max_idx = max(unique(trigger_idx))) %>%
+    #mutate(max_idx = max(unique(trigger_idx))) %>%
   #ungroup() %>%
   #mutate(is_max = trigger_idx == max_idx) %>%
-  #filter(is_max == F)
+  #filter(is_max == F) %>%
+  #distinct()
+
 
 meco_df %>%
   arrange(lang, text_id, sent_id, trigger_idx, target_idx)
 
+
+```
+
+Wrap-up Distance Effect
+```{r}
+
+wrap_up_df = meco_df %>%
+  mutate(dist = trigger_idx-target_idx) %>%
+  group_by(lang, text_id, sent_id) %>%
+    mutate(max_idx = max(unique(trigger_idx))) %>%
+  ungroup() %>%
+  mutate(is_max = trigger_idx == max_idx)
+
+wrap_up_df %>%
+  filter(n_regressions > 0) %>%
+  distinct() %>%
+  group_by(is_max) %>%
+    summarise(m = mean(dist)) %>%
+  ungroup()
 
 ```
 
@@ -94,8 +120,8 @@ combined_df = rbind(combined_df, meco_df) %>%
 
 combined_df = combined_df %>%
   mutate(n_regressions = if_else(is.na(n_regressions), 0, as.double(n_regressions)),
-         n_subjs = if_else(is.na(n_subjs), 0, as.double(n_subjs)),
-         prop_subj = if_else(is.na(prop_subj), 0, as.double(prop_subj)),
+         #n_subjs = if_else(is.na(n_subjs), 0, as.double(n_subjs)),
+         #prop_subj = if_else(is.na(prop_subj), 0, as.double(prop_subj)),
          target_len = scale(target_len),
          target_freq = scale(target_freq),
          target_surp = scale(target_surp),
@@ -139,12 +165,12 @@ combined_df %>%
 ```
 
 
-## Logistic Regression Analysis
+## Regression Analysis
 ```{r}
 
 m_pmi = combined_df %>%
   filter(lang == "it") %>%
-  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + ppmi + e_ppmi + npmi + e_npmi", data = ., family = poisson())
+  glm("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + npmi + ppmi", data = ., family = poisson())
 summary(m_pmi)
 
 ```
@@ -301,6 +327,22 @@ for (l in langs){
 
 
 
+
+```{r}
+# This block looks at the comparison of NPMI and E[NPMI] to see if the expectation is performing significantly better here
+dll_epmi_ens_comp = data.frame()
+for (l in langs){
+    temp_df = pred_df %>% filter(lang == l)
+    dll1 = temp_df[temp_df$tag  == "E[PPMI]+E[NPMI]",]$llh
+    dll2 = temp_df[temp_df$tag  == "E[NPMI]",]$llh
+    dll_diff = dll1 - dll2
+    dll_diff = dll_diff[!is.na(dll_diff)]
+    ptest = perm.test(dll_diff, num.sim = 500)
+    dll_epmi_ens_comp = rbind(dll_epmi_ens_comp, data.frame(lang = l, epmi_ens_m=mean(dll_diff), epmi_ens_pval = as.numeric(ptest$p.value)))
+}
+dll_epmi_ens_comp 
+```
+
 ```{r}
 
 plot_df = dll_df %>%
@@ -317,33 +359,65 @@ plot_df = dll_df %>%
               upper = m + s * 1.96,
               lower = m - s * 1.96,
               pval = unique(pval)) %>%
-  ungroup()
+  ungroup() %>%
+  group_by(lang) %>%
+    mutate(y_max = max(upper)) %>%
+  ungroup()%>%
+  mutate(y_step = max(upper) / 15) %>%
+  merge(., dll_npmi_comp, by=c("lang"))
+
+plot_df
+```
+
+```{r}
+pval_func = function(pval) {
+  if_else(pval >= 0.05 , " ",
+          if_else(pval < 0.05 & pval >= 0.01, "*",
+                  if_else(pval < 0.01 & pval >= 0.001, "**",
+                          if_else(pval < 0.001,
+                                  "***",""))))
+}
+
+```
+
+```{r}
+
+library(ggtext)
   
 plot_df %>%
   mutate(lang = factor(lang, levels = c("de", "es", "fi", "it", "tr"),
          labels = c("German", "Spanish", "Finnish", "Italian", "Turkish"))) %>%
-  mutate(sig = case_when( pval >= 0.05 ~ " ",
-                        pval < 0.05 & pval >= 0.01  ~ "*",
-                        pval < 0.01 & pval >= 0.001  ~ "**",
-                        pval < 0.001  ~ "***")) %>%
-  ggplot(aes(x = tag, y=m, color = theory)) +
+  mutate(sig = pval_func(pval),
+         pmi_ens_pval = pval_func(pmi_ens_pval),
+         epmi_ens_pval = pval_func(epmi_ens_pval),
+         npi_pval = pval_func(npi_pval)) %>%
+  ggplot(aes(x = tag, y=m, color = theory, fill = theory)) +
+    #geom_point(size = 2) +
+    geom_bar(stat="identity", alpha=0.5) +
+    geom_errorbar(aes(ymax = upper, ymin = lower), width = 0) +
+    geom_text(aes(label = sig, color = theory, y = y_max + y_step * 4), size = 3, angle = 0) +
+  
+    # NPMI vs. E[NPMI] Comparison plotting
+    geom_segment(aes(y = y_max + 1 * y_step, yend = y_max + 13 * y_step), size =0.5, x = 1.95, xend = 5.05, color="gray", alpha=0.4) +
+    geom_text(aes(label = npi_pval, y = y_max + y_step * 1.5, x = 3.5), size = 3, angle = 0, color = "gray", alpha=0.2) +
+  
+  
     geom_hline(yintercept = 0, color = "black", linetype="dashed") +
-    geom_point(size = 2) +
-    geom_errorbar(aes(ymax = upper, ymin = lower), width = 0.4) +
-    geom_text(aes(label = sig, color = theory), y = 0.11, size = 3, angle = 0) +
     #geom_text(aes(label = ""), y=0.12, size = 1) +
     facet_wrap(.~lang) +
-    coord_cartesian(ylim=c(-0.03, 0.12)) +
+    #coord_cartesian(ylim=c(-0.03, 0.21)) +
     ylab("Delta LogLik") +
     labs(color="") +
     #scale_color_viridis(discrete = TRUE, option = "D") +
     #ggtitle("Regression Count Between Words") +
-    #scale_color_manual(values=c("#39ccbd", "#3991cc")) +
+    scale_color_manual(values=c("#39ccbd", "#3991cc")) +
+    scale_fill_manual(values=c("#39ccbd", "#3991cc")) +
     theme(
       axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
       axis.title.x = element_blank(),
       axis.text.y = element_text(angle = 90, hjust = 0.5),
-      legend.position = "none"
+      legend.position = "none",
+      panel.grid.minor = element_blank()
     )
 
 ggsave("./images/meco_results.pdf", device="pdf", width = 8, height = 5)
@@ -351,31 +425,6 @@ ggsave("./images/meco_results.pdf", device="pdf", width = 8, height = 5)
 ```
 
 
-
-```{r}
-
-# This block looks at the comparison of NPMI and E[NPMI] to see if the expectation is performing significantly better here
-
-#pred_df = read.csv("./fits/agg_poisson_preds.csv")
-
-
-dll_npmi_comp = data.frame()
-
-for (l in langs){
-    temp_df = pred_df %>% filter(lang == l)
-    dll1 = temp_df[temp_df$tag  == "E[NPMI]",]$llh
-    dll2 = temp_df[temp_df$tag  == "NPMI",]$llh
-    dll_diff = dll1 - dll2
-    dll_diff = dll_diff[!is.na(dll_diff)]
-    ptest = perm.test(dll_diff, num.sim = 1000)
-    dll_npmi_comp = rbind(dll_npmi_comp, data.frame(lang = l, m=mean(dll_diff), pval = as.numeric(ptest$p.value)))
-}
-
-write.csv(dll_npmi_comp, "./images/meco_dll_npmi_comp.csv")
-  
-dll_npmi_comp 
-
-```
 
 ## ============
 ## Coefficients 
