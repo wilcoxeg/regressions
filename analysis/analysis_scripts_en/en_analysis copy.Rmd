@@ -1,0 +1,646 @@
+---
+title: "Regressions: Analysis"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+shhh(library(Hmisc))
+shhh(library(jmuOutlier))
+shhh(library(pscl))
+shhh(library(broom))
+shhh(library(broom.mixed))
+library(performance)
+
+
+theme_set(theme_bw())
+options(digits=4)
+options(dplyr.summarise.inform = FALSE)
+set.seed(444)
+options(scipen=999)
+
+corpora = c("provo", "ucl")
+windows = c("w0", "w1_mean", "w1_max") #How many words on either side of the target do we integrate into the analysis?
+models = c("BERT-allRC", "BERT-maskRC", "BERT-dropRC")
+```
+
+```{r}
+
+local_path_to_data = "../../../../research/regressions/ancillary_data/combined_df_raw.csv"
+combined_df = read_rds(local_path_to_data)
+
+combined_df %>%
+  arrange(corpus, text_id, sent_id, trigger_idx, target_idx)
+
+```
+
+## Analysis looking at the effect of PMI
+
+```{r, include == F}
+
+
+# In this chunk we run a big mixed effects model that compares the dll between a zero-inflated model and a non zero-inflated model.
+
+library(glmmTMB)
+
+formula = "n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + pmi + (1|model)"
+
+m_provo_zip = combined_df %>% filter(corpus == "provo") %>%
+  mutate(window = as.factor(window), model = as.factor(model)) %>%
+  glmmTMB(formula=as.formula(formula), data=., family=poisson, ziformula = as.formula(formula))
+print(summary(m_provo_zip))
+
+
+m_ucl_zip = combined_df %>% filter(corpus == "ucl") %>%
+  mutate(window = as.factor(window), model = as.factor(model)) %>%
+  glmmTMB(formula=as.formula(formula), data=., family=poisson, ziformula = as.formula(formula))
+print(summary(m_ucl_zip))
+
+m_provo_vanilla = combined_df %>% filter(corpus == "provo") %>%
+  mutate(window = as.factor(window), model = as.factor(model)) %>%
+  glmmTMB(formula=as.formula(formula), data=., family=poisson, ziformula = ~0)
+summary(m_provo_vanilla)
+
+m_ucl_vanilla = combined_df %>% filter(corpus == "ucl") %>%
+  mutate(window = as.factor(window), model = as.factor(model)) %>%
+  glmmTMB(formula=as.formula(formula), data=., family=poisson, ziformula = ~0)
+summary(m_ucl_vanilla)
+
+# Comparison between Zero-Inflated Poisson (ZIP) model and Vanilla Poisson model (VaP)
+print("For Provo:")
+print(paste0("zip llh: ", logLik(m_provo_zip)/nrow(combined_df %>% filter(corpus == "provo"))))
+print(paste0("vanilla llh: ", logLik(m_provo_vanilla)/nrow(combined_df %>% filter(corpus == "provo"))))
+
+print("For UCL:")
+print(paste0("zip llh: ", logLik(m_ucl_zip)/nrow(combined_df %>% filter(corpus == "ucl"))))
+print(paste0("vanilla llh: ", logLik(m_ucl_vanilla)/nrow(combined_df %>% filter(corpus == "ucl"))))
+
+
+
+
+```
+
+
+### Analysis Looking at the effect of PPMI and NPMI
+
+```{r}
+
+
+model_cross_val_poisson = function(form, df, corpus, tag, num_folds=10){
+  
+  folds <- cut(seq(1,nrow(df)),breaks=num_folds,labels=FALSE)
+  
+  pred_df = data.frame()
+  count_coeff_df = data.frame()
+  zero_coeff_df = data.frame()
+  
+  for(i in 1:num_folds){
+    testIndexes = which(folds==i,arr.ind=TRUE)
+    testData = df[testIndexes,]
+    trainData = df[-testIndexes,]
+
+    # Train the ZIP model
+    zip_model = trainData %>% pscl::zeroinfl(as.formula(form), data=.)
+    
+    # Get the coefficients for the count (poisson) portion
+    count_weights = zip_model$coefficients$count
+    # Get the coefficients for the zero (binomial) portion
+    zero_weights = zip_model$coefficients$zero
+    
+    # Get vector of predictor names that are included in the model (minus the intercept)
+    pred_names = colnames(data.frame(as.list(zip_model$coefficients$count)))
+    pred_names = pred_names[2:length(pred_names)]
+    
+    # Get the x_i's and add a column for the intercept
+    xis = testData %>% dplyr::select(pred_names) %>% mutate(intercept = 1) %>% relocate(intercept)
+    # Get \beta x_i for the count data
+    count_preds = xis * rep(unlist(count_weights),each=nrow(xis))
+    count_preds = count_preds %>% mutate(xb = rowSums(.)) %>% mutate(lambda = exp(xb))
+    # Get \gamma x_i for the zero data
+    zero_preds = xis * rep(unlist(zero_weights), each=nrow(xis))
+    zero_preds = zero_preds %>% mutate(zy = rowSums(.)) %>% 
+      mutate(mu = exp(zy)/(1 + exp(zy))) #AKA "pi" for the logistic portion
+    
+    yis = testData %>% dplyr::select(n_regressions) %>% dplyr::rename(yi = n_regressions) %>%
+      cbind(count_preds$lambda, count_preds$xb, zero_preds$mu, zero_preds$zy) %>%
+      dplyr::rename(lambda = `count_preds$lambda`, xb = `count_preds$xb`, mu = `zero_preds$mu`, zy = `zero_preds$zy`)
+    
+    predictions = yis %>%
+      mutate(prediction = (1-mu)*lambda, #The prediction for this x_i
+             automatic_prediction = predict(zip_model, newdata=xis), #The prediction from built-in function to check we got the right value
+             llh = if_else(yi == 0, log( exp(zy) + exp(-exp(xb)) ) - log(1 + exp(zy)),  ( ((yi * xb) - exp(xb)) - log(factorial(yi))) - log(1 + exp(zy))) #The LLH of a ZIP model's prediction
+             ) 
+    pred_df = rbind(pred_df, predictions %>% mutate(fold = i, tag = tag))
+    count_coeff_df = rbind(count_coeff_df, as.data.frame(as.list(count_weights)) %>% mutate(fold = i, tag = tag))
+    zero_coeff_df = rbind(zero_coeff_df, as.data.frame(as.list(zero_weights)) %>% mutate(fold = i, tag = tag))
+  }
+
+  result = list(pred_df, count_coeff_df, zero_coeff_df)
+  return( result )
+}
+    
+
+```
+
+
+```{r}
+
+regression_forms = c(
+  " ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp",
+  
+  " ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + ppmi + ppmi_0",
+  " ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + npmi + npmi_0",
+  " ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + ppmi + npmi",
+
+  " ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + e_ppmi",
+  " ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + e_npmi",
+  " ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + e_npmi + e_ppmi"
+)
+
+regression_form_tags = c("Baseline", "PPMI", "NPMI", "PPMI+NPMI", "E[PPMI]", "E[NPMI]", "E[PPMI]+E[NPMI]")
+
+llh_df = data.frame()
+coeff_count_df = data.frame()
+coeff_zero_df = data.frame()
+
+for(w in windows) {
+  for(i in c(1:length(regression_forms))) {
+    for (c in corpora){
+      for (m in models){
+  
+        form = regression_forms[i]
+        tag = regression_form_tags[i]
+        
+        print(paste("<", c, m, w, tag, ">", sep="  "))
+        
+        result = model_cross_val_poisson(paste0("n_regressions", form), combined_df %>% filter(corpus == c, model == m, window == w), corpus = c, tag = tag)
+        
+        llh_df = rbind(llh_df, as.data.frame(result[1]) %>% mutate(corpus = c, model = m, window = w) )
+        # Different coeffs dfs will have different number of columns based on which model they are using, so we gather them first and then append
+        coeff_count = as.data.frame(result[2]) %>% relocate(fold) %>% relocate(tag) %>%
+          gather(coeff, value, c(3:ncol(.)))
+        coeff_count_df = rbind(coeff_count_df, coeff_count %>% mutate(corpus = c, model = m, window = w))
+        # And the same for zeros
+        coeff_zero = as.data.frame(result[3]) %>% relocate(fold) %>% relocate(tag) %>%
+          gather(coeff, value, c(3:ncol(.)))
+        coeff_zero_df = rbind(coeff_zero_df, coeff_zero %>% mutate(corpus = c, model = m, window = w))
+  
+      }
+    }
+  }
+}
+
+
+write_rds(llh_df, "../../../../research/regressions/ancillary_data/en_zip_llh.rds")
+write_rds(coeff_count_df, "../../../../research/regressions/ancillary_data/en_zip_coeffs_count.rds")
+write_rds(coeff_zero_df, "../../../../research/regressions/ancillary_data/en_zip_coeffs_zero.rds")
+
+```
+
+This chunk computes the DLL between target and baseline models, and checks the difference via a paired permutation test
+
+```{r}
+
+# Read in data if you don't want to run the models
+#llh_df = read_rds("../../../../research/regressions/ancillary_data/en_zip_llh.rds")
+#coeff_count_df = read_rds("../../../../research/regressions/ancillary_data/en_zip_coeffs_count.rds")
+#coeff_zero_df = read_rds("../../../../research/regressions/ancillary_data/en_zip_coeffs_zero.rds")
+
+tags = unique(llh_df$tag)
+dll_df = data.frame()
+
+for (c in corpora){
+for (m in models){
+for (w in windows){
+  
+  temp_df = llh_df %>% filter(corpus == c, model == m, window == w)
+  
+  print(paste(c, m, w, sep=" "))
+      
+  for(tag1 in regression_form_tags){
+    
+      if(tag1 != "Baseline"){
+        
+        dll1 = temp_df[temp_df$tag  == tag1,]$llh
+        dll2 = temp_df[temp_df$tag  == "Baseline",]$llh
+        dll_diff = dll1 - dll2
+        dll_diff = dll_diff[!is.na(dll_diff)]
+        ptest = perm.test(dll_diff, num.sim = 1000)
+        dll_df = rbind(dll_df, data.frame(dll_diff) %>% mutate(tag=tag1, corpus = c, model = m, window = w, pval = as.numeric(ptest$p.value)))
+      }
+  }
+}
+}
+}
+
+write_rds(dll_df, "../../../../research/regressions/ancillary_data/en_dll.rds")
+
+
+```
+
+
+```{r}
+
+dll_df = read_rds("../../../../research/regressions/ancillary_data/en_dll.rds")
+coeff_count_df = read_rds("../../../../research/regressions/ancillary_data/en_zip_coeffs_count.rds")
+coeff_zero_df = read_rds("../../../../research/regressions/ancillary_data/en_zip_coeffs_count.rds")
+
+```
+
+This block looks at various comparisons between different DLLs -- PPMI vs. PPMI+NPMI, E[PPMI] vs. E[PPMI]+E[NPMI] and PPMI vs. E[PPMI]
+
+
+```{r}
+dll_model_comp = data.frame()
+
+for (c in corpora){
+for (m in models){
+for (w in windows){
+  
+  print(paste(c, m, w, sep = " "))
+  
+  temp_df = dll_df %>% filter(corpus == c, model == m, window == w)
+  
+  # Comparison for PPMI and PPMI+NPMI
+  pmi_comp_dll1 = temp_df[temp_df$tag  == "PPMI+NPMI",]$dll_diff
+  pmi_comp_dll2 = temp_df[temp_df$tag  == "PPMI",]$dll_diff
+  pmi_dll_diff = pmi_comp_dll1 - pmi_comp_dll2
+  pmi_dll_diff = pmi_dll_diff[!is.na(pmi_dll_diff)]
+  pmi_ptest = perm.test(pmi_dll_diff, num.sim = 1000)
+  
+  # Comparison for E[PPMI] and E[PPMI]+E[NPMI]
+  epmi_comp_dll1 = temp_df[temp_df$tag  == "E[PPMI]+E[NPMI]",]$dll_diff
+  epmi_comp_dll2 = temp_df[temp_df$tag  == "E[PPMI]",]$dll_diff
+  epmi_dll_diff = epmi_comp_dll1 - epmi_comp_dll2
+  epmi_dll_diff = epmi_dll_diff[!is.na(epmi_dll_diff)]
+  epmi_ptest = perm.test(epmi_dll_diff, num.sim = 1000)
+  
+  # Comparison for PPMI and E[PPMI]
+  exp_comp_dll1 = temp_df[temp_df$tag  == "E[PPMI]",]$dll_diff
+  exp_comp_dll2 = temp_df[temp_df$tag  == "PPMI",]$dll_diff
+  exp_dll_diff = exp_comp_dll1 - exp_comp_dll2
+  exp_dll_diff = exp_dll_diff[!is.na(exp_dll_diff)]
+  exp_ptest = perm.test(exp_dll_diff, num.sim = 1000)
+  
+  dll_model_comp = rbind(dll_model_comp, data.frame(corpus = c, model = m, window = w,  
+                                                    pmi_m=mean(pmi_dll_diff), pmi_pval = pmi_ptest$p.value, 
+                                                    epmi_m = mean(epmi_dll_diff), epmi_pval = epmi_ptest$p.value,
+                                                    exp_m=mean(exp_dll_diff), exp_pval = exp_ptest$p.value))
+}}}
+
+dll_model_comp %>% filter(window == "w0")
+
+```
+
+This block summarizes data and puts it in a dataframe ready for plotting
+
+```{r}
+
+pval_func = function(pval) {
+  if_else(pval >= 0.05 , "",
+          if_else(pval < 0.05 & pval >= 0.01, "*",
+                  if_else(pval < 0.01 & pval >= 0.001, "**",
+                          if_else(pval < 0.001,
+                                  "***",""))))
+}
+
+plot_df = dll_df %>%
+  drop_na() %>%
+  mutate(theory = case_when(
+    tag == "NPMI" | tag == "E[NPMI]" ~ "Reanalysis",
+    tag == "PPMI" | tag == "E[PPMI]" ~ "Reactivation"
+  )) %>%
+  mutate(theory = if_else( is.na(theory), "Ensemble", theory)) %>%
+  mutate(theory = factor(theory, levels = c("Reactivation", "Reanalysis", "Ensemble"))) %>%
+  mutate(tag = factor(tag, levels = c("PMI", "PPMI", "NPMI", "|PMI|", "PPMI+NPMI",  "E[PMI]", "E[PPMI]", "E[NPMI]", "|E[PMI]|", "E[PPMI]+E[NPMI]", "All Predictors"))) %>%
+  group_by(corpus, tag, theory, model, window) %>%
+    summarise(m = mean(dll_diff),
+              s = std.error(dll_diff),
+              upper = m + s * 1.96,
+              lower = m - s * 1.96,
+              pval = unique(pval)) %>%
+  ungroup() %>%
+  group_by(corpus, model) %>%
+    mutate(y_max = max(upper)) %>%
+  ungroup()%>%
+  group_by(corpus) %>%
+    mutate(y_step = max(upper) / 10) %>%
+  ungroup() %>%
+  merge(., dll_model_comp, by=c("corpus", "model", "window")) %>%
+  # Change pvals to star notation
+  mutate(sig = pval_func(pval),
+         pmi_pval = pval_func(pmi_pval),
+        epmi_pval = pval_func(epmi_pval)) %>%
+  mutate(corpus = factor(corpus, levels = c("dundee", "provo", "ucl"),
+           labels = c("Dundee", "Provo", "UCL"))) %>%
+  mutate(window = factor(window, levels = c("w0", "w1_mean", "w1_max"), labels = c("Target Word", "Target + 1 Word\n Window (mean)", "Target + 1 Word\nWindow (max)")))
+
+
+plot_df
+
+write.csv(plot_df, "../../../../research/regressions/ancillary_data/en_plot_zip_df.csv")
+
+
+```
+
+This function plots the data
+
+```{r}
+
+scale_round_func = function(x) sprintf("%.2f", x)
+
+plot_df = read.csv("../../../research/regressions/ancillary_data/en_plot_zip_df.csv") %>%
+  mutate(theory = case_when(
+    tag == "NPMI" | tag == "E[NPMI]" ~ "Reanalysis",
+    tag == "PPMI" | tag == "E[PPMI]" ~ "Reactivation"
+  )) %>%
+  mutate(theory = if_else( is.na(theory), "Ensemble", theory)) %>%
+  mutate(theory = factor(theory, levels = c("Reactivation", "Reanalysis", "Ensemble"))) %>%
+  mutate(tag = factor(tag, levels = c("PMI", "PPMI", "NPMI", "|PMI|", "PPMI+NPMI",  "E[PMI]", "E[PPMI]", "E[NPMI]", "|E[PMI]|", "E[PPMI]+E[NPMI]", "All Predictors")))
+  
+plot_df %>%
+  
+  #For figures showing the effect of window/aggregation, simply
+  # 1. Comment out the "Target Word" filter bleow
+  # 2. Change the "facet grid" command
+  # 3. Change the ggsave command to save the new image
+  
+  # Change here for window analysis
+  filter(window == "Target Word") %>%
+  #filter(corpus == "UCL") %>%
+  #filter(corpus == "Provo)
+  ggplot(aes(x = tag, y=m, color = theory, fill=theory)) +
+    geom_bar(stat="identity", alpha = 1, color = "white", size = 0, width = 0.8) + 
+    geom_errorbar(aes(ymax = upper, ymin = lower), width = 0, color = "black", size = 0.3) +
+    geom_text(aes(label = sig, color = theory, y = if_else(corpus == "Provo", 0.12, 0.023)), size = 3, angle = 0) +
+
+    geom_text(aes(label = " ", color = theory, y = y_max + y_step * 7), size = 3, angle = 0) +
+    geom_text(aes(label = " ", color = theory, y = 0 - y_step * 1), size = 3, angle = 0) +
+  
+    # Change here for window analysis
+    #facet_grid(window~model, scales = "free_y") +
+    facet_grid(corpus~model, scales = "free_y")
+  
+    ylab("Delta LogLik") +
+    labs(color="") +
+  
+    scale_color_manual(values=c("#f8766d", "#00BFC4", "#b2b2b2")) +
+    scale_fill_manual(values=c("#f8766d", "#00BFC4", "#b2b2b2")) +
+  
+  #ggtitle("Regression Count Between Words") + 
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+      axis.title.x = element_blank(),
+      axis.text.y = element_text(),
+      legend.position = "none",
+      panel.grid.minor = element_blank()
+    )
+
+# Change here for window analysis
+#ggsave("../images/exp_1/en_results_ucl.pdf", device="pdf", width = 8.5, height = 5)
+#ggsave("../images/exp_1/en_results_provo.pdf", device="pdf", width = 8.5, height = 5)
+ggsave("../images/exp_1/en_results.pdf", device="pdf", width = 8.5, height = 5)
+
+
+```
+
+
+## Analysis of Coefficients 
+
+```{r}
+
+# This chunk gets the standard deviations for underlying variables in order to standardize coefficients
+
+local_data_path = "../../../../research/regressions/ancillary_data/combined_df_raw.csv"
+combined_df = read_rds(local_data_path)
+
+variable_sd_df = data.frame()
+variable_set = c("trigger_len", "trigger_freq", "trigger_surp", "target_len", "target_freq", "target_surp", "ppmi", "npmi", "e_ppmi", "e_npmi", "ppmi_0", "npmi_0", "dist")
+
+for(c in corpora){
+  for(m in models) {
+    for(w in windows) {
+  
+  temp_df = combined_df %>% filter(model == m, corpus == c, window == w) %>% 
+    dplyr::select(variable_set) %>%
+    gather(coeff, value, variable_set) %>%
+    group_by(coeff) %>%
+      summarise( coeff_sd = sd(value)) %>%
+    ungroup() %>%
+    mutate(model = m, corpus = c, window = w)
+  
+  variable_sd_df = rbind(variable_sd_df, temp_df)
+  
+  }
+  }
+}
+
+```
+
+This chunk summarizes the coefficients across the folds of data / models trained
+
+```{r}
+
+
+get_coeff_list = function(tag){
+  if(tag == "PPMI"){return(list( c("ppmi", "ppmi_0"), c("ppmi", "ppmi_0")))}
+  if(tag == "NPMI"){return(list( c("npmi", "npmi_0"), c("npmi", "npmi_0")))}
+  if(tag == "PPMI+NPMI"){return(list( c("ppmi", "ppmi_0", "npmi", "npmi_0"), c("ppmi", "npmi")))}
+  if(tag == "E[PPMI]"){return(list(c("e_ppmi"), c("e_ppmi")))}
+  if(tag == "E[NPMI]"){return(list(c("e_npmi"), c("e_npmi")))}
+  if(tag == "E[PPMI]+E[NPMI]"){return(list(c("e_ppmi", "e_npmi"), c("e_ppmi", "e_npmi")))}
+}
+
+regression_form_tags = c("PPMI", "NPMI", "PPMI+NPMI", "E[PPMI]", "E[NPMI]", "E[PPMI]+E[NPMI]")
+
+
+coeff_agg = data.frame()
+
+
+for(t in regression_form_tags){
+  for(c in corpora){
+    for(m in models) {
+      for(w in windows){
+    
+    target_coeffs = get_coeff_list(t)
+   
+    coeff_count = coeff_count_df %>% filter(tag == t, corpus == c, model == m, window == w, coeff %in% target_coeffs[[1]]) %>% mutate(component = "count")
+    coeff_zero = coeff_zero_df %>% filter(tag == t, corpus == c, model == m, window == w, coeff %in% target_coeffs[[2]]) %>% mutate(component = "zero")
+
+    temp_coeff_agg = coeff_count %>% rbind(coeff_zero) %>%
+      group_by(tag, coeff, corpus, model, window, component) %>%
+        summarise(m = mean(value), sd = std.error(value)) %>%
+      ungroup() %>%
+      mutate( zero = if_else(grepl("_0", coeff), T, F),
+              coeff = str_remove(coeff, "_0")) %>%
+      merge(., variable_sd_df, by=c("model", "corpus", "coeff", "window")) %>%
+      mutate(coeff = if_else(zero, paste0(coeff, "_0"), coeff)) %>%
+      dplyr::select(-zero) %>%
+      mutate(coeff = str_replace(coeff, "_NA", "")) %>%
+      mutate(
+        m = m * coeff_sd, # scale the mean by the sd of the underlying variable
+       upper = m + 1.96 * sd, lower = m - 1.96 * sd) # calculate upper and lower 95% CIs
+    
+    coeff_agg = rbind(coeff_agg, temp_coeff_agg)
+    
+      }
+    
+    }
+     
+  }
+}
+
+coeff_agg
+
+```
+
+
+This chunk plots the coefficient sub-plots for the main results figure (for PMI-based coefficients)
+
+```{r}
+
+for(mo in models) {
+  for(c in corpora){
+    for(w in windows){
+
+coeff_agg %>%
+  mutate(coeff_tag = paste(coeff, model, sep=" ")) %>%
+  mutate(`Model Component` = case_when(
+    component == "zero" & grepl("0", coeff) ~ "zero bias coeff",
+    component == "zero" &! grepl("0", coeff) ~ "zero inflation model",
+    component == "count" & grepl("0", coeff) ~ "count bias coeff",
+    component == "count" & !grepl("0", coeff) ~ "count (poisson) model"
+  )) %>%
+  filter(!grepl("0", coeff)) %>%
+  mutate(`PMI-based Statistic` = case_when(
+    grepl("ppmi", coeff) ~ "PPMI or E[PPMI]",
+    grepl("npmi", coeff) ~ "NPMI or E[NPMI]"
+  )) %>%
+  filter(model == mo, corpus == c, window == w) %>%
+
+  mutate(tag = factor(tag, levels = c("PMI", "PPMI", "NPMI", "|PMI|", "PPMI+NPMI",  "E[PMI]", "E[PPMI]", "E[NPMI]", "|E[PMI]|", "E[PPMI]+E[NPMI]", "All Predictors"))) %>%
+  
+  ggplot(aes(x = coeff_tag, y = m, color = `PMI-based Statistic`, shape = `Model Component`)) +
+    geom_hline(yintercept=0, color = "green", size = 0.2) +
+    geom_errorbar(aes(ymin = lower, ymax = upper), color = "grey", size = 0.3) +
+    geom_point() +
+    ylab("coefficient \n (scaled)") +
+  facet_grid(~tag, scales = "free") +
+  scale_color_manual(values=c("#00BFC4", "#f8766d","#b2b2b2")) +
+  ylim(c(-1, 0.3)) +
+  theme(
+    #legend.position = "right",
+    legend.position = "none",
+    axis.text.x = element_blank(),
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    panel.spacing = unit(0.1, "lines"),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 5),
+    #axis.text.y = element_blank(),
+    axis.title.y = element_text(angle = 90, size = 8),
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_blank()#,
+    #axis.ticks.y = element_blank()
+  )
+
+ggsave(paste0("../images/exp_1/exp1_subplots/en_coeff_pmi_",mo,"-",c,"-",w,".pdf"), device="pdf", width = 3, height = 1)
+#ggsave(paste0("../images/exp_1/exp1_subplots/meco_coeff_pmi_",mo,"-",c,".pdf"), device="pdf", width = 5, height = 3)
+
+}
+}
+}
+
+```
+
+
+## Baseline Coefficients Here
+
+This chunk summarizes data for the baseline coefficient plots
+
+```{r}
+
+coeff_agg_df = coeff_count_df %>% mutate(model.component = "Count (Poisson) \n Portion") %>% rbind(coeff_zero_df %>% mutate(model.component = "Zero Inflation \n Portion"))
+
+coeff_agg_df = coeff_agg_df %>%
+  filter(coeff != "X.Intercept.") %>%
+  filter(tag == "Baseline") %>%
+  merge(., variable_sd_df, by=c("coeff", "corpus", "model", "window")) %>%
+  group_by(coeff, corpus, model, window, model.component) %>%
+    summarise(
+        m = mean(value) * coeff_sd, s = std.error(value),
+        upper = m + 1.96 * s, lower = m - 1.96 * s
+      ) %>%
+  ungroup() %>%
+  unique()
+
+coeff_agg_df
+
+```
+
+This chunk plots data for the baseline coefficient plots
+
+```{r}
+
+coeff_agg_df %>%
+  # Change commenting here to plot the "dist" subplot
+  #filter(coeff=="dist") %>%
+  filter(coeff != "dist") %>%
+  filter(window == "w0") %>%
+  mutate(corpus = if_else(corpus == "provo", "Provo", "UCL")) %>%
+  mutate(plot_label = paste(corpus, model, sep = "\n")) %>%
+  mutate(coeff = factor(coeff, levels = c("ppmi", "npmi", "e_ppmi", "e_npmi", "target_freq", "target_len", "target_surp", "trigger_freq", "trigger_len", "trigger_surp", "dist"),
+         labels = c("PPMI", "NPMI", "E[PPMI]", "E[NPMI]", "Frequency\n(Target)", "Length\n(Target)", "Surprisal\n(Target)", "Frequency\n(Source)", "Length\n(Source)", "Surprisal\n(Source)", "Distance \n " ))) %>%
+  
+  ggplot(aes(x = plot_label, y = m, fill = plot_label)) +
+    geom_hline(yintercept = 0, color = "blue", alpha = 0.5, linetype = "dotted") +
+    geom_hline(yintercept = 0, color = "black", size = 0.25, alpha = 1) +
+  
+    geom_bar(stat = "identity", alpha=1, width = 0.7, position = position_dodge(width = 0.9), size = 0) + 
+    geom_errorbar(aes(ymin = lower, ymax = upper), color = "black", width = 0.1, position = position_dodge(width = 0.9)) +
+  
+    ylab("Coefficient Estimate (Scaled)") +
+    xlab("") +
+  #scale_color_brewer( palette = "Set2") +
+  #scale_color_manual(values = c("#485ea0", "#a04f48")) +
+  scale_fill_manual(values = c("#66C2A5", "#8DA0CB", "#A6D854", "#FC8D62", "#c9a86a", "#FFD92F")) +
+  #scale_fill_manual(values = c("#66C2A5", "#8DA0CB", "#A6D854", "#FC8D62", "#E78AC3", "#FFD92F")) +
+  facet_grid(model.component~coeff, scales = "free_y") +
+  guides(color = "none",
+         fill = guide_legend(nrow = 1)) +
+  theme(
+    strip.text.x = element_text(),
+    axis.text.x = element_blank(),
+    #axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    legend.title = element_blank()
+  )
+
+# Change commenting here to plot the "dist" subplot
+ggsave("../images/exp_1/exp1_baseline_coeffs.pdf", device = "pdf", width = 8 , height = 4)
+#ggsave("../images/exp_1/exp1_baseline_coeffs_dist.pdf", device = "pdf", width = 2.2 , height = 4)
+
+
+```
+
+
+
+
+
+
+

@@ -1,0 +1,128 @@
+---
+title: "Regressions: Analysis"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+shhh(library(Hmisc))
+shhh(library(jmuOutlier))
+shhh(library(pscl))
+shhh(library(broom))
+shhh(library(broom.mixed))
+library(performance)
+
+
+theme_set(theme_bw())
+options(digits=4)
+options(dplyr.summarise.inform = FALSE)
+set.seed(444)
+options(scipen=999)
+
+corpora = c("provo", "ucl")
+windows = c("w0", "w1_mean", "w1_max") #How many words on either side of the target do we integrate into the analysis?
+models = c("BERT-allRC", "BERT-maskRC", "BERT-dropRC")
+```
+
+## Read in Data
+
+Data is stored locally because the file is too large for github
+
+```{r}
+
+local_path_to_data = "../../../../research/regressions/ancillary_data/combined_df_raw.csv"
+combined_df = read_rds(local_path_to_data)
+
+```
+
+In this block we plot the correlations between variables in the English data
+
+```{r}
+
+# Get lower triangle of the correlation matrix
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+
+library(reshape2)
+
+for(c in corpora) {
+  
+  cor = combined_df %>% filter(corpus == c) %>%
+    group_by(text_id, sent_id, trigger_idx, target_idx) %>%
+      summarise( pmi = mean(pmi), dist = dist, target_len = target_len, target_freq = target_freq, target_surp = target_surp, 
+                 trigger_len = trigger_len, trigger_freq = trigger_freq, trigger_surp = trigger_surp)  %>%
+    ungroup() %>%
+    dplyr::select(-text_id, -sent_id, -trigger_idx, -target_idx) %>%
+    dplyr::rename(source_surp = trigger_surp, source_len = trigger_len, source_freq = trigger_freq)
+
+  cor_df = get_lower_tri(round(cor(cor), 2)) %>%
+    melt(., na.rm=T)
+  
+  cor_df %>% 
+    ggplot(aes(x = Var1, y=Var2)) +
+    geom_tile(aes(fill=value)) +
+    geom_text(aes(label = value), size = 3) +
+    scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+     midpoint = 0, limit = c(-1,1), space = "Lab", 
+      name="Pearson\nCorrelation\nCoefficient") +
+    ggtitle(paste0("Correlation in ", c)) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.title = element_blank()
+    )
+  
+  ggsave(paste0("../images/correlations/en_",c,"_corr.pdf"), device="pdf", width = 7, height = 4.5)
+
+
+}
+
+```
+
+
+In this section, we obtain the VIF for the count component of the ZIP model as a second check for adverse collinearity
+
+```{r}
+
+vif_df = data.frame()
+
+for(c in corpora) {
+  
+  print(paste0("corpus: ", c))
+  m_target = combined_df %>%
+  filter(model == "BERT-maskRC", corpus == c) %>%
+  pscl::zeroinfl(formula = as.formula("n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + pmi"), data = .)
+
+  col_df = as.data.frame(check_collinearity(m_target, component = "count") %>% mutate(corpus = c))
+  vif_df = rbind(vif_df, col_df)
+
+}
+
+vif_df = vif_df %>%
+  dplyr::select(-SE_factor) %>% relocate(corpus) %>%
+  spread(Term, VIF)
+
+vif_df
+
+write.csv(vif_df, "../../../../research/regressions/ancillary_data/en_VIF.csv")
+
+```
+
+
+

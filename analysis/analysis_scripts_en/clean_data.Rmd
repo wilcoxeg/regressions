@@ -1,0 +1,280 @@
+---
+title: "Regressions: Analysis"
+output: html_notebook
+---
+
+# Clean Data (English)
+
+This notebook reads in the results 
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+shhh(library(Hmisc))
+shhh(library(jmuOutlier))
+shhh(library(pscl))
+shhh(library(broom))
+shhh(library(broom.mixed))
+shhh(library(performance))
+
+
+theme_set(theme_bw())
+options(digits=4)
+options(dplyr.summarise.inform = FALSE)
+set.seed(444)
+options(scipen=999)
+
+corpora = c("provo", "ucl")
+windows = c("w0", "w1_mean", "w1_max") #How many words on either side of the target do we integrate into the analysis?
+models = c("BERT-allRC", "BERT-maskRC", "BERT-dropRC")
+```
+
+
+# Read and Clean Data
+
+```{r}
+
+provo_pairwise_df = read.csv("../../data/harmonized_results/provo_pairwise_stats_df.csv")
+provo_sacc_df = read.csv("../../data/harmonized_results/provo_saccades_df.csv")
+
+provo_agg_regressions = provo_sacc_df %>%
+  mutate(next_ia_idx = as.numeric(next_ia_idx), prev_ia_idx = as.numeric(prev_ia_idx)) %>%
+  drop_na() %>%
+  filter(next_ia_idx < curr_ia_idx) %>%
+  group_by(text_id, sent_id, curr_ia_idx, next_ia_idx) %>%
+    summarise(n_regressions = n(), n_subjs = length(unique(subj))) %>%
+  ungroup() %>%
+  dplyr::rename(
+    trigger_idx = curr_ia_idx,
+    target_idx = next_ia_idx
+  )
+  
+provo_df = provo_pairwise_df %>%
+  merge(provo_agg_regressions, all= T, by=c("text_id", "sent_id", "trigger_idx", "target_idx")) %>%
+  mutate(corpus = "provo") %>%
+  dplyr::rename(model = mask_type) %>%
+  mutate(model = case_when(model == "none" ~ "BERT-allRC", model == "mask" ~ "BERT-maskRC", model == "truncate" ~ "BERT-dropRC")) %>%
+  # Below, change the sign of NPMI so that it's positive (alredy done for e_npmi)
+  # This is just so that coefficients between the two can be interpreted similarly in regressions
+  mutate(npmi = -1 * npmi)
+
+# The material below is for extracing the means / maxes of the 1-word window around the target word
+
+provo_target_lead1_df = provo_df %>% mutate(target_idx = target_idx + 1) %>% dplyr::select(target, text_id, sent_id, trigger_idx, target_idx, model, target_len, target_freq, target_surp, 
+                                                                                           pmi, ppmi, npmi, e_pmi, e_ppmi, e_npmi)
+provo_target_lead2_df = provo_df %>% mutate(target_idx = target_idx + 2) %>% dplyr::select(target, text_id, sent_id, trigger_idx, target_idx, model, target_len, target_freq, target_surp, 
+                                                                                           pmi, ppmi, npmi, e_pmi, e_ppmi, e_npmi)
+provo_target_lag1_df = provo_df %>% mutate(target_idx = target_idx - 1) %>% dplyr::select(target, text_id, sent_id, trigger_idx, target_idx, model, target_len, target_freq, target_surp, 
+                                                                                          pmi, ppmi, npmi, e_pmi, e_ppmi, e_npmi)
+provo_target_lag2_df = provo_df %>% mutate(target_idx = target_idx - 2) %>% dplyr::select(target, text_id, sent_id, trigger_idx, target_idx, model, target_len, target_freq, target_surp, 
+                                                                                          pmi, ppmi, npmi, e_pmi, e_ppmi, e_npmi)
+
+provo_df = merge(provo_df, provo_target_lead1_df, all = T, by = c("text_id", "sent_id", "trigger_idx", "target_idx", "model"), suffixes = c("", ".+1"))
+provo_df = merge(provo_df, provo_target_lead2_df, all = T, by = c("text_id", "sent_id", "trigger_idx", "target_idx", "model"), suffixes = c("", ".+2"))
+provo_df = merge(provo_df, provo_target_lag1_df, all = T, by = c("text_id", "sent_id", "trigger_idx", "target_idx", "model"), suffixes = c("", ".-1"))
+provo_df = merge(provo_df, provo_target_lag2_df, all = T, by = c("text_id", "sent_id", "trigger_idx", "target_idx", "model"), suffixes = c("", ".-2")) %>%
+    filter(! is.na(trigger)) %>% filter(target_idx >= 1)
+
+cols2keep = c("text_id", "sent_id", "trigger_idx", "target_idx", "trigger", "trigger_len", "trigger_freq", "trigger_surp", "target", "target_len", "target_freq", "target_surp","pmi", "ppmi", "npmi", "e_pmi", "e_ppmi", "e_npmi", "n_regressions", "corpus", "model", "window", "is_multitok")
+
+provo_0_df = provo_df %>% 
+  mutate(window = "w0") %>%
+  dplyr::select(cols2keep)
+
+provo_w1_mean_df = provo_df %>%
+  mutate(window = "w1_mean") %>%
+  mutate(
+    target_mean = rowMeans(dplyr::select(.,c("target_len", "target_len.+1", "target_len.-1")), na.rm=TRUE),
+    target_freq = rowMeans(dplyr::select(.,c("target_freq", "target_freq.+1", "target_freq.-1")), na.rm=TRUE),
+    target_surp = rowMeans(dplyr::select(.,c("target_surp", "target_surp.+1", "target_surp.-1")), na.rm=TRUE),
+    pmi = rowMeans(dplyr::select(.,c("pmi", "pmi.+1", "pmi.-1")), na.rm=TRUE),
+    ppmi = rowMeans(dplyr::select(.,c("ppmi", "ppmi.+1", "ppmi.-1")), na.rm=TRUE),
+    npmi = rowMeans(dplyr::select(.,c("npmi", "npmi.+1", "npmi.-1")), na.rm=TRUE),
+    e_pmi = rowMeans(dplyr::select(.,c("e_pmi", "e_pmi.+1", "e_pmi.-1")), na.rm=TRUE),
+    e_ppmi = rowMeans(dplyr::select(.,c("e_ppmi", "e_ppmi.+1", "e_ppmi.-1")), na.rm=TRUE),
+    e_npmi = pmax(e_npmi, `e_npmi.+1`, `e_npmi.-1`, na.rm=TRUE),
+  ) %>%
+  dplyr::select(cols2keep)
+  
+provo_w1_max_df = provo_df %>%
+  mutate(window = "w1_max") %>%
+  mutate(
+    target_len = pmax(target_len, `target_len.+1`, `target_len.-1`, na.rm=TRUE),
+    target_freq = pmax(target_freq, `target_freq.+1`, `target_freq.-1`, na.rm=TRUE),
+    target_surp = pmax(target_freq, `target_surp.+1`, `target_surp.-1`, na.rm=TRUE),
+    # PMI -- We get the max absolute value of PMI. We also want to keep this signed (unlike PPMI and NPMI) 
+    abs_max_pmi = abs(pmax(pmi, `pmi.+1`, `pmi.-1`, na.rm=TRUE)),
+    abs_min_pmi = abs(pmin(pmi, `pmi.+1`, `pmi.-1`, na.rm=TRUE)),
+    pmi = if_else(abs_max_pmi > abs_min_pmi, abs_max_pmi, -1 * abs_min_pmi),
+    ppmi = pmax(ppmi, `ppmi.+1`, `ppmi.-1`, na.rm=TRUE),
+    npmi = pmax(npmi, `npmi.+1`, `npmi.-1`, na.rm=TRUE),
+    # PMI -- We get the max absolute value of PMI. We also want to keep this signed (unlike PPMI and NPMI) 
+    abs_max_e_pmi = abs(pmax(e_pmi, `e_pmi.+1`, `e_pmi.-1`, na.rm=TRUE)),
+    abs_min_e_pmi = abs(pmin(e_pmi, `e_pmi.+1`, `e_pmi.-1`, na.rm=TRUE)),
+    e_pmi = if_else(abs_max_e_pmi > abs_min_e_pmi, abs_max_e_pmi, -1 * abs_min_e_pmi),
+    e_ppmi = pmax(e_ppmi, `e_ppmi.+1`, `e_ppmi.-1`, na.rm=TRUE),
+    e_npmi = pmax(e_npmi, `e_npmi.+1`, `e_npmi.-1`, na.rm=TRUE),
+  ) %>%
+  dplyr::select(cols2keep)
+
+provo_df = rbind(provo_0_df, provo_w1_mean_df)
+provo_df = rbind(provo_df, provo_w1_max_df) %>%
+  arrange(text_id, sent_id, trigger_idx, target_idx)
+
+provo_agg_regressions %>% filter(n_regressions > 1)
+
+provo_df %>%
+  filter(model == "BERT-allRC", window == "w0")
+
+
+```
+
+
+```{r}
+
+ucl_pairwise_df = read.csv("../../data/harmonized_results/ucl_pairwise_stats_df.csv")
+ucl_sacc_df = read.csv("../data/../harmonized_results/ucl_saccades_df.csv")
+
+ucl_agg_regressions = ucl_sacc_df %>%
+  mutate(next_ia_idx = as.numeric(next_ia_idx), prev_ia_idx = as.numeric(prev_ia_idx)) %>%
+  drop_na() %>%
+  filter(next_ia_idx < curr_ia_idx) %>%
+  group_by(text_id, sent_id, curr_ia_idx, next_ia_idx) %>%
+    summarise(n_regressions = n(), n_subjs = length(unique(subj))) %>%
+  ungroup() %>%
+  dplyr::rename(
+    trigger_idx = curr_ia_idx,
+    target_idx = next_ia_idx
+  )
+  
+ucl_df = ucl_pairwise_df %>%
+  merge(ucl_agg_regressions, all= T, by=c("text_id", "sent_id", "trigger_idx", "target_idx")) %>%
+  mutate(corpus = "ucl")%>%
+  mutate(ppmi = if_else(pmi > 0, pmi, 0),
+         npmi = if_else(pmi < 0, pmi, 0)) %>%
+  dplyr::rename(model = mask_type) %>%
+  mutate(model = case_when(model == "none" ~ "BERT-allRC", model == "mask" ~ "BERT-maskRC", model == "truncate" ~ "BERT-dropRC"))
+
+# Again, the material below is for extracing the 1-word window around the targets
+  
+ucl_target_lead1_df = ucl_df %>% mutate(target_idx = target_idx + 1) %>% dplyr::select(target, text_id, sent_id, trigger_idx, target_idx, model, target_len, target_freq, target_surp, 
+                                                                                           pmi, ppmi, npmi, e_pmi, e_ppmi, e_npmi)
+ucl_target_lead2_df = ucl_df %>% mutate(target_idx = target_idx + 2) %>% dplyr::select(target, text_id, sent_id, trigger_idx, target_idx, model, target_len, target_freq, target_surp, 
+                                                                                           pmi, ppmi, npmi, e_pmi, e_ppmi, e_npmi)
+ucl_target_lag1_df = ucl_df %>% mutate(target_idx = target_idx - 1) %>% dplyr::select(target, text_id, sent_id, trigger_idx, target_idx, model, target_len, target_freq, target_surp, 
+                                                                                          pmi, ppmi, npmi, e_pmi, e_ppmi, e_npmi)
+ucl_target_lag2_df = ucl_df %>% mutate(target_idx = target_idx - 2) %>% dplyr::select(target, text_id, sent_id, trigger_idx, target_idx, model, target_len, target_freq, target_surp, 
+                                                                                          pmi, ppmi, npmi, e_pmi, e_ppmi, e_npmi)
+
+ucl_df = merge(ucl_df, ucl_target_lead1_df, all = T, by = c("text_id", "sent_id", "trigger_idx", "target_idx", "model"), suffixes = c("", ".+1"))
+ucl_df = merge(ucl_df, ucl_target_lead2_df, all = T, by = c("text_id", "sent_id", "trigger_idx", "target_idx", "model"), suffixes = c("", ".+2"))
+ucl_df = merge(ucl_df, ucl_target_lag1_df, all = T, by = c("text_id", "sent_id", "trigger_idx", "target_idx", "model"), suffixes = c("", ".-1"))
+ucl_df = merge(ucl_df, ucl_target_lag2_df, all = T, by = c("text_id", "sent_id", "trigger_idx", "target_idx", "model"), suffixes = c("", ".-2")) %>%
+    filter(! is.na(trigger)) %>% filter(target_idx >= 1)
+
+cols2keep = c("text_id", "sent_id", "trigger_idx", "target_idx", "trigger", "trigger_len", "trigger_freq", "trigger_surp", "target", "target_len", "target_freq", "target_surp","pmi", "ppmi", "npmi", "e_pmi", "e_ppmi", "e_npmi", "n_regressions", "corpus", "model", "window", "is_multitok")
+
+ucl_0_df = ucl_df %>% 
+  mutate(window = "w0") %>%
+  dplyr::select(cols2keep)
+
+ucl_w1_mean_df = ucl_df %>%
+  mutate(window = "w1_mean") %>%
+  mutate(
+    target_mean = rowMeans(dplyr::select(.,c("target_len", "target_len.+1", "target_len.-1")), na.rm=TRUE),
+    target_freq = rowMeans(dplyr::select(.,c("target_freq", "target_freq.+1", "target_freq.-1")), na.rm=TRUE),
+    target_surp = rowMeans(dplyr::select(.,c("target_surp", "target_surp.+1", "target_surp.-1")), na.rm=TRUE),
+    pmi = rowMeans(dplyr::select(.,c("pmi", "pmi.+1", "pmi.-1")), na.rm=TRUE),
+    ppmi = rowMeans(dplyr::select(.,c("ppmi", "ppmi.+1", "ppmi.-1")), na.rm=TRUE),
+    npmi = rowMeans(dplyr::select(.,c("npmi", "npmi.+1", "npmi.-1")), na.rm=TRUE),
+    e_pmi = rowMeans(dplyr::select(.,c("e_pmi", "e_pmi.+1", "e_pmi.-1")), na.rm=TRUE),
+    e_ppmi = rowMeans(dplyr::select(.,c("e_ppmi", "e_ppmi.+1", "e_ppmi.-1")), na.rm=TRUE),
+    e_npmi = pmax(e_npmi, `e_npmi.+1`, `e_npmi.-1`, na.rm=TRUE),
+  ) %>%
+  dplyr::select(cols2keep)
+  
+ucl_w1_max_df = ucl_df %>%
+  mutate(window = "w1_max") %>%
+  mutate(
+    target_len = pmax(target_len, `target_len.+1`, `target_len.-1`, na.rm=TRUE),
+    target_freq = pmax(target_freq, `target_freq.+1`, `target_freq.-1`, na.rm=TRUE),
+    target_surp = pmax(target_freq, `target_surp.+1`, `target_surp.-1`, na.rm=TRUE),
+    # PMI -- We get the max absolute value of PMI. We also want to keep this signed (unlike PPMI and NPMI) 
+    abs_max_pmi = abs(pmax(pmi, `pmi.+1`, `pmi.-1`, na.rm=TRUE)),
+    abs_min_pmi = abs(pmin(pmi, `pmi.+1`, `pmi.-1`, na.rm=TRUE)),
+    pmi = if_else(abs_max_pmi > abs_min_pmi, abs_max_pmi, -1 * abs_min_pmi),
+    ppmi = pmax(ppmi, `ppmi.+1`, `ppmi.-1`, na.rm=TRUE),
+    npmi = pmax(npmi, `npmi.+1`, `npmi.-1`, na.rm=TRUE),
+    # PMI -- We get the max absolute value of PMI. We also want to keep this signed (unlike PPMI and NPMI) 
+    abs_max_e_pmi = abs(pmax(e_pmi, `e_pmi.+1`, `e_pmi.-1`, na.rm=TRUE)),
+    abs_min_e_pmi = abs(pmin(e_pmi, `e_pmi.+1`, `e_pmi.-1`, na.rm=TRUE)),
+    e_pmi = if_else(abs_max_e_pmi > abs_min_e_pmi, abs_max_e_pmi, -1 * abs_min_e_pmi),
+    e_ppmi = pmax(e_ppmi, `e_ppmi.+1`, `e_ppmi.-1`, na.rm=TRUE),
+    e_npmi = pmax(e_npmi, `e_npmi.+1`, `e_npmi.-1`, na.rm=TRUE),
+  ) %>%
+  dplyr::select(cols2keep)
+
+ucl_df = rbind(ucl_0_df, ucl_w1_mean_df)
+ucl_df = rbind(ucl_df, ucl_w1_max_df) %>%
+  arrange(text_id, sent_id, trigger_idx, target_idx)
+
+ucl_agg_regressions %>% filter(n_regressions > 1)
+
+ucl_df %>%
+  filter(model == "BERT-allRC", window == "w0")
+
+print(2942 / 27188)
+
+
+```
+
+## Combine UCL and Provo DFs
+
+```{r}
+
+combined_df = data.frame()
+combined_df = rbind(combined_df, ucl_df)
+combined_df = rbind(combined_df, provo_df)
+  
+combined_df = combined_df %>%
+  distinct() %>%
+  mutate(n_regressions = if_else(is.na(n_regressions), 0, as.double(n_regressions)),
+         dist = trigger_idx - target_idx,
+         
+         # Indicator variables for regressions
+         ppmi_0 = if_else(ppmi==0, 1, 0),
+         npmi_0 = if_else(npmi == 0, 1, 0),
+         ) %>%
+  drop_na() %>%
+  filter(is_multitok == "False")
+
+# Saving data locally because the file is too large for Github
+local_path_to_data = "../../../../research/regressions/ancillary_data/combined_df_raw.csv"
+
+write_rds(combined_df, local_path_to_data)
+
+combined_df %>%
+  arrange(corpus, text_id, sent_id, trigger_idx, target_idx)
+
+```
+
+
+
+
+
+
+

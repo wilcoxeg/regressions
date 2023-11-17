@@ -163,11 +163,11 @@ def get_mask(split_sent, mt, j, i, mask_idxs):
 
 def get_pairwise_stats(split_sent, text_id, sent_id, mlm_model, ar_surps, freqs, mask_type):
     
-    tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
-    model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
+    #tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
+    #model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model], cache_dir = "/cluster/scratch/ewilcox/transformer_models")
 
-    #tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model])
-    #model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model])
+    tokenizer = BertTokenizer.from_pretrained(MODEL_NAME[mlm_model])
+    model = BertForMaskedLM.from_pretrained(MODEL_NAME[mlm_model])
     
     model.eval()
 
@@ -290,9 +290,8 @@ def main():
     # Call to get multilingual results from the MECO corpus for just the "mask" mask-type
     #python get_predictors.py --input_path ./test_sents.csv --dataset test --mlm_model mbert --ar_model sberbank-ai/mGPT --language ru --mask_type mask
 
-    # Call to get all mask-type results from a test corpus
-    #python get_predictors.py --input_path ./test_sents.csv --dataset test --mlm_model bert --ar_model gpt2 --language en --mask_type all
-
+    # Call to get results from a test corpus
+    #python get_predictors.py --input_path ../data/test/test_sents.csv --dataset test --mlm_model bert-en --ar_model gpt2 --language en --mask_type none
 
 if __name__ == '__main__':
 	main()
