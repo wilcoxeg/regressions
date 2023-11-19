@@ -34,24 +34,34 @@ options(dplyr.summarise.inform = FALSE)
 set.seed(444)
 options(scipen=999)
 
-corpora = c("provo", "ucl")
-windows = c("w0", "w1_mean", "w1_max") #How many words on either side of the target do we integrate into the analysis?
+# To run the basic analysis use:
+corpora = c("provo", "ucl", "dundee")
+windows = c("w0")
 models = c("BERT-allRC", "BERT-maskRC", "BERT-dropRC")
+
+# To run the window analysis use:
+#corpora = c("provo", "ucl")
+#windows = c("w0", "w1_mean", "w1_max")
+#model = c("BERT-allRC", "BERT-maskRC", "BERT-dropRC")
+
+# Placing large files not in github directory
+data_path = "../../../../research/regressions/ancillary_data/"
+
 ```
 
 ```{r}
 
-local_path_to_data = "../../../../research/regressions/ancillary_data/combined_df_raw.csv"
-combined_df = read_rds(local_path_to_data)
+combined_df = read_rds(paste0(data_path, "combined_df_raw.csv"))
 
 combined_df %>%
   arrange(corpus, text_id, sent_id, trigger_idx, target_idx)
 
 ```
 
+
 ## Analysis looking at the effect of PMI
 
-```{r, include == F}
+```{r, eval = FALSE}
 
 
 # In this chunk we run a big mixed effects model that compares the dll between a zero-inflated model and a non zero-inflated model.
@@ -61,37 +71,25 @@ library(glmmTMB)
 formula = "n_regressions ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + pmi + (1|model)"
 
 m_provo_zip = combined_df %>% filter(corpus == "provo") %>%
+  filter(window == "w0") %>%
   mutate(window = as.factor(window), model = as.factor(model)) %>%
   glmmTMB(formula=as.formula(formula), data=., family=poisson, ziformula = as.formula(formula))
-saveRDS(m_provo_zip, "./fits/m_provo_zip.rds")
+saveRDS(m_provo_zip, "../fits/m_provo_zip.rds")
 summary(m_provo_zip$count$coefficients)
 
-
 m_ucl_zip = combined_df %>% filter(corpus == "ucl") %>%
+  filter(window == "w0") %>%
   mutate(window = as.factor(window), model = as.factor(model)) %>%
   glmmTMB(formula=as.formula(formula), data=., family=poisson, ziformula = as.formula(formula))
-saveRDS(m_ucl_zip, "./fits/en_ucl_zip.rds")
+saveRDS(m_ucl_zip, "../fits/en_ucl_zip.rds")
 print(summary(m_ucl_zip))
 
-m_provo_vanilla = combined_df %>% filter(corpus == "provo") %>%
-  mutate(window = as.factor(window), model = as.factor(model)) %>%
-  glmmTMB(formula=as.formula(formula), data=., family=poisson, ziformula = ~0)
-summary(m_provo_vanilla)
-
-m_ucl_vanilla = combined_df %>% filter(corpus == "ucl") %>%
-  mutate(window = as.factor(window), model = as.factor(model)) %>%
-  glmmTMB(formula=as.formula(formula), data=., family=poisson, ziformula = ~0)
-summary(m_ucl_vanilla)
-
-# Comparison between Zero-Inflated Poisson (ZIP) model and Vanilla Poisson model (VaP)
-print("For Provo:")
-print(paste0("zip llh: ", logLik(m_provo_zip)/nrow(combined_df %>% filter(corpus == "provo"))))
-print(paste0("vanilla llh: ", logLik(m_provo_vanilla)/nrow(combined_df %>% filter(corpus == "provo"))))
-
-print("For UCL:")
-print(paste0("zip llh: ", logLik(m_ucl_zip)/nrow(combined_df %>% filter(corpus == "ucl"))))
-print(paste0("vanilla llh: ", logLik(m_ucl_vanilla)/nrow(combined_df %>% filter(corpus == "ucl"))))
-
+m_dundee_zip = combined_df %>% filter(corpus == "dundee") %>%
+  filter(window == "w0") %>%
+  mutate(model = as.factor(model)) %>%
+  glmmTMB(formula=as.formula(formula), data=., family=poisson, ziformula = as.formula(formula))
+saveRDS(m_dundee_zip, "../fits/en_dundee_zip.rds")
+print(summary(m_dundee_zip))
 
 
 
@@ -103,7 +101,7 @@ print(paste0("vanilla llh: ", logLik(m_ucl_vanilla)/nrow(combined_df %>% filter(
 ```{r}
 
 
-model_cross_val_poisson = function(form, df, corpus, tag, num_folds=10){
+model_cross_val_poisson = function(form, df, corpus, tag, num_folds=5){
   
   folds <- cut(seq(1,nrow(df)),breaks=num_folds,labels=FALSE)
   
@@ -180,6 +178,7 @@ llh_df = data.frame()
 coeff_count_df = data.frame()
 coeff_zero_df = data.frame()
 
+
 for(w in windows) {
   for(i in c(1:length(regression_forms))) {
     for (c in corpora){
@@ -208,20 +207,21 @@ for(w in windows) {
 }
 
 
-write_rds(llh_df, "../../../../research/regressions/ancillary_data/en_zip_llh.rds")
-write_rds(coeff_count_df, "../../../../research/regressions/ancillary_data/en_zip_coeffs_count.rds")
-write_rds(coeff_zero_df, "../../../../research/regressions/ancillary_data/en_zip_coeffs_zero.rds")
+write_rds(llh_df, paste0(data_path, "en_zip_all_llh.rds"))
+write_rds(coeff_count_df, paste0(data_path, "en_zip_all_coeffs_count.rds"))
+write_rds(coeff_zero_df, paste0(data_path, "en_zip_all_coeffs_zero.rds"))
 
 ```
+
 
 This chunk computes the DLL between target and baseline models, and checks the difference via a paired permutation test
 
 ```{r}
 
 # Read in data if you don't want to run the models
-#llh_df = read_rds("../../../../research/regressions/ancillary_data/en_zip_llh.rds")
-#coeff_count_df = read_rds("../../../../research/regressions/ancillary_data/en_zip_coeffs_count.rds")
-#coeff_zero_df = read_rds("../../../../research/regressions/ancillary_data/en_zip_coeffs_zero.rds")
+llh_df = read_rds(paste0(data_path, "en_zip_all_llh.rds"))
+coeff_count_df = read_rds(paste0(data_path, "en_zip_all_coeffs_count.rds"))
+coeff_zero_df = read_rds(paste0(data_path, "en_zip_all_coeffs_zero.rds"))
 
 tags = unique(llh_df$tag)
 dll_df = data.frame()
@@ -250,24 +250,24 @@ for (w in windows){
 }
 }
 
-write_rds(dll_df, "../../../../research/regressions/ancillary_data/en_dll.rds")
+# Write the DLL to the same place that coeffs and LLHs are stored
+write_rds(dll_df, paste0(data_path, "en_all_dll.rds"))
 
 
 ```
 
 
 ```{r}
-
-dll_df = read_rds("../../../../research/regressions/ancillary_data/en_dll.rds")
-coeff_count_df = read_rds("../../../../research/regressions/ancillary_data/en_zip_coeffs_count.rds")
-coeff_zero_df = read_rds("../../../../research/regressions/ancillary_data/en_zip_coeffs_count.rds")
+dll_df = read_rds(paste0(data_path, "en_all_dll.rds"))
+coeff_count_df = read_rds(paste0(data_path, "en_zip_all_coeffs_count.rds"))
+coeff_zero_df = read_rds(paste0(data_path, "en_zip_all_coeffs_zero.rds"))
 
 ```
 
 This block looks at various comparisons between different DLLs -- PPMI vs. PPMI+NPMI, E[PPMI] vs. E[PPMI]+E[NPMI] and PPMI vs. E[PPMI]
 
 
-```{r}
+```{r, eval=FALSE}
 dll_model_comp = data.frame()
 
 for (c in corpora){
@@ -323,6 +323,7 @@ pval_func = function(pval) {
 
 plot_df = dll_df %>%
   drop_na() %>%
+  filter( abs(dll_diff) < 500) %>%
   mutate(theory = case_when(
     tag == "NPMI" | tag == "E[NPMI]" ~ "Reanalysis",
     tag == "PPMI" | tag == "E[PPMI]" ~ "Reactivation"
@@ -355,7 +356,7 @@ plot_df = dll_df %>%
 
 plot_df
 
-write.csv(plot_df, "../../../../research/regressions/ancillary_data/en_plot_zip_df.csv")
+write.csv(plot_df, paste0(data_path, "en_plot_zip_df.csv"))
 
 
 ```
@@ -366,7 +367,7 @@ This function plots the data
 
 scale_round_func = function(x) sprintf("%.2f", x)
 
-plot_df = read.csv("../../../research/regressions/ancillary_data/en_plot_zip_df.csv") %>%
+plot_df = read.csv(paste0(data_path, "en_plot_zip_df.csv")) %>%
   mutate(theory = case_when(
     tag == "NPMI" | tag == "E[NPMI]" ~ "Reanalysis",
     tag == "PPMI" | tag == "E[PPMI]" ~ "Reactivation"
@@ -385,18 +386,20 @@ plot_df %>%
   # Change here for window analysis
   filter(window == "Target Word") %>%
   #filter(corpus == "UCL") %>%
-  #filter(corpus == "Provo)
+  #filter(corpus == "Provo) %>%
   ggplot(aes(x = tag, y=m, color = theory, fill=theory)) +
     geom_bar(stat="identity", alpha = 1, color = "white", size = 0, width = 0.8) + 
     geom_errorbar(aes(ymax = upper, ymin = lower), width = 0, color = "black", size = 0.3) +
-    geom_text(aes(label = sig, color = theory, y = if_else(corpus == "Provo", 0.12, 0.023)), size = 3, angle = 0) +
+    geom_text(aes(label = sig, color = theory, y = case_when(corpus == "Provo"~ 0.12,
+                                                             corpus == "UCL" ~ 0.023,
+                                                             corpus == "Dundee" ~ 0.004)), size = 3, angle = 0) +
 
     geom_text(aes(label = " ", color = theory, y = y_max + y_step * 7), size = 3, angle = 0) +
     geom_text(aes(label = " ", color = theory, y = 0 - y_step * 1), size = 3, angle = 0) +
   
     # Change here for window analysis
     #facet_grid(window~model, scales = "free_y") +
-    facet_grid(corpus~model, scales = "free_y")
+    facet_grid(corpus~model, scales = "free_y") +
   
     ylab("Delta LogLik") +
     labs(color="") +
@@ -428,7 +431,7 @@ ggsave("../images/exp_1/en_results.pdf", device="pdf", width = 8.5, height = 5)
 
 # This chunk gets the standard deviations for underlying variables in order to standardize coefficients
 
-local_data_path = "../../../../research/regressions/ancillary_data/combined_df_raw.csv"
+local_data_path = paste0(data_path, "combined_df_raw.csv")
 combined_df = read_rds(local_data_path)
 
 variable_sd_df = data.frame()
@@ -507,7 +510,8 @@ for(t in regression_form_tags){
   }
 }
 
-coeff_agg
+coeff_agg %>%
+  filter(tag == "PPMI", component == "count", corpus == "dundee")
 
 ```
 
@@ -515,6 +519,9 @@ coeff_agg
 This chunk plots the coefficient sub-plots for the main results figure (for PMI-based coefficients)
 
 ```{r}
+
+#corpora = c("dundee")
+corpora= c("ucl", "provo")
 
 for(mo in models) {
   for(c in corpora){
@@ -544,7 +551,8 @@ coeff_agg %>%
     ylab("coefficient \n (scaled)") +
   facet_grid(~tag, scales = "free") +
   scale_color_manual(values=c("#00BFC4", "#f8766d","#b2b2b2")) +
-  ylim(c(-1, 0.3)) +
+  #coord_cartesian(ylim=c(-10, 3)) +
+  coord_cartesian(ylim=c(-1, 0.3))+
   theme(
     #legend.position = "right",
     legend.position = "none",
@@ -562,7 +570,6 @@ coeff_agg %>%
   )
 
 ggsave(paste0("../images/exp_1/exp1_subplots/en_coeff_pmi_",mo,"-",c,"-",w,".pdf"), device="pdf", width = 3, height = 1)
-#ggsave(paste0("../images/exp_1/exp1_subplots/meco_coeff_pmi_",mo,"-",c,".pdf"), device="pdf", width = 5, height = 3)
 
 }
 }
@@ -604,7 +611,7 @@ coeff_agg_df %>%
   #filter(coeff=="dist") %>%
   filter(coeff != "dist") %>%
   filter(window == "w0") %>%
-  mutate(corpus = if_else(corpus == "provo", "Provo", "UCL")) %>%
+  mutate(corpus = factor(corpus, levels = c("provo", "ucl", "dundee"), labels = c("Provo", "UCL", "Dundee"))) %>%
   mutate(plot_label = paste(corpus, model, sep = "\n")) %>%
   mutate(coeff = factor(coeff, levels = c("ppmi", "npmi", "e_ppmi", "e_npmi", "target_freq", "target_len", "target_surp", "trigger_freq", "trigger_len", "trigger_surp", "dist"),
          labels = c("PPMI", "NPMI", "E[PPMI]", "E[NPMI]", "Frequency\n(Target)", "Length\n(Target)", "Surprisal\n(Target)", "Frequency\n(Source)", "Length\n(Source)", "Surprisal\n(Source)", "Distance \n " ))) %>%
@@ -614,17 +621,21 @@ coeff_agg_df %>%
     geom_hline(yintercept = 0, color = "black", size = 0.25, alpha = 1) +
   
     geom_bar(stat = "identity", alpha=1, width = 0.7, position = position_dodge(width = 0.9), size = 0) + 
-    geom_errorbar(aes(ymin = lower, ymax = upper), color = "black", width = 0.1, position = position_dodge(width = 0.9)) +
+    geom_errorbar(aes(ymin = lower, ymax = upper), color = "#8d8e8d", width = 0.05, position = position_dodge(width = 0.9)) +
   
     ylab("Coefficient Estimate (Scaled)") +
     xlab("") +
-  #scale_color_brewer( palette = "Set2") +
-  #scale_color_manual(values = c("#485ea0", "#a04f48")) +
-  scale_fill_manual(values = c("#66C2A5", "#8DA0CB", "#A6D854", "#FC8D62", "#c9a86a", "#FFD92F")) +
-  #scale_fill_manual(values = c("#66C2A5", "#8DA0CB", "#A6D854", "#FC8D62", "#E78AC3", "#FFD92F")) +
+    #scale_fill_manual(values = c("#66b9c4","#668ac4", "#7166c4","#e5c539", "#e5a039", "#e56f39","#a6d854", "#63d854", "#14a04a")) +
+    #scale_fill_manual(values = c("#66C2A5","#FC8D62","#8DA0CB","#E78AC3","#A6D854","#FFD92F","#E5C494","#B3B3B3", "#5f9e56")) +
+  
+  
+    scale_fill_manual(values = c("#A6D854","#66C2A5","#5f9e56","#E78AC3","#FC8D62","#FFD92F","#8DA0CB","#B3B3B3", "#E5C494")) +
+
+  
+  scale_color_brewer(palette = 2) +
   facet_grid(model.component~coeff, scales = "free_y") +
   guides(color = "none",
-         fill = guide_legend(nrow = 1)) +
+         fill = guide_legend(nrow = 3)) +
   theme(
     strip.text.x = element_text(),
     axis.text.x = element_blank(),
@@ -634,8 +645,8 @@ coeff_agg_df %>%
   )
 
 # Change commenting here to plot the "dist" subplot
-ggsave("../images/exp_1/exp1_baseline_coeffs.pdf", device = "pdf", width = 8 , height = 4)
-#ggsave("../images/exp_1/exp1_baseline_coeffs_dist.pdf", device = "pdf", width = 2.2 , height = 4)
+ggsave("../images/exp_1/exp1_baseline_coeffs.pdf", device = "pdf", width = 8 , height = 4.5)
+#ggsave("../images/exp_1/exp1_baseline_coeffs_dist.pdf", device = "pdf", width = 2.2 , height = 4) #This is for plotting the dist results
 
 
 ```

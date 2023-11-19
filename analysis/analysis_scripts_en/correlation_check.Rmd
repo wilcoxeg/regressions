@@ -34,7 +34,7 @@ options(dplyr.summarise.inform = FALSE)
 set.seed(444)
 options(scipen=999)
 
-corpora = c("provo", "ucl")
+corpora = c("provo", "ucl", "dundee")
 windows = c("w0", "w1_mean", "w1_max") #How many words on either side of the target do we integrate into the analysis?
 models = c("BERT-allRC", "BERT-maskRC", "BERT-dropRC")
 ```

@@ -1,0 +1,196 @@
+---
+title: "Regressions: Analysis"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+shhh(library(Hmisc))
+shhh(library(jmuOutlier))
+shhh(library(pscl))
+shhh(library(broom))
+shhh(library(broom.mixed))
+library(performance)
+
+
+theme_set(theme_bw())
+options(digits=4)
+options(dplyr.summarise.inform = FALSE)
+set.seed(444)
+options(scipen=999)
+
+corpora = c("provo", "ucl", "dundee")
+windows = c("w0") #Just look at the 1-word windwo
+models = c("BERT-allRC", "BERT-maskRC", "BERT-dropRC")
+```
+
+```{r}
+
+local_path_to_data = "../../../../research/regressions/ancillary_data/combined_df_raw.csv"
+combined_df = read_rds(local_path_to_data)
+
+combined_df %>%
+  arrange(corpus, text_id, sent_id, trigger_idx, target_idx)
+
+```
+
+
+### Analysis Looking at the effect of PPMI and NPMI
+
+```{r}
+
+get_zip_llh = function(zip_model, testData){
+  
+  # Get the coefficients for the count (poisson) portion
+  count_weights = zip_model$coefficients$count
+  # Get the coefficients for the zero (binomial) portion
+  zero_weights = zip_model$coefficients$zero
+  
+  # Get vector of predictor names that are included in the model (minus the intercept)
+  pred_names = colnames(data.frame(as.list(zip_model$coefficients$count)))
+  pred_names = pred_names[2:length(pred_names)]
+  
+  # Get the x_i's and add a column for the intercept
+  xis = testData %>% dplyr::select(pred_names) %>% mutate(intercept = 1) %>% relocate(intercept)
+  # Get \beta x_i for the count data
+  count_preds = xis * rep(unlist(count_weights),each=nrow(xis))
+  count_preds = count_preds %>% mutate(xb = rowSums(.)) %>% mutate(lambda = exp(xb))
+  # Get \gamma x_i for the zero data
+  zero_preds = xis * rep(unlist(zero_weights), each=nrow(xis))
+  zero_preds = zero_preds %>% mutate(zy = rowSums(.)) %>% 
+    mutate(mu = exp(zy)/(1 + exp(zy))) #AKA "pi" for the logistic portion
+  
+  yis = testData %>% dplyr::select(n_regressions) %>% dplyr::rename(yi = n_regressions) %>%
+    cbind(count_preds$lambda, count_preds$xb, zero_preds$mu, zero_preds$zy) %>%
+    dplyr::rename(lambda = `count_preds$lambda`, xb = `count_preds$xb`, mu = `zero_preds$mu`, zy = `zero_preds$zy`)
+  
+  predictions = yis %>%
+    mutate(prediction = (1-mu)*lambda, #The prediction for this x_i
+           automatic_prediction = predict(zip_model, newdata=xis), #The prediction from built-in function to check we got the right value
+           llh = if_else(yi == 0, log( exp(zy) + exp(-exp(xb)) ) - log(1 + exp(zy)),  ( ((yi * xb) - exp(xb)) - log(factorial(yi))) - log(1 + exp(zy)))) #The LLH of a ZIP model's prediction
+           
+  return(predictions %>% dplyr::select(prediction, llh) %>% mutate(model = "zip"))
+           
+}
+
+```
+
+
+```{r}
+
+get_poi_llh = function(poi_model, testData){
+  
+  predictions = testData %>% dplyr::select(n_regressions) %>% rename(y=n_regressions) %>% 
+      mutate(prediction = predict(poi_model, newdata = testData)) %>%
+      mutate(llh = - exp(prediction) + y * prediction - log(factorial(y)))
+  
+  return(predictions %>% dplyr::select(prediction, llh) %>%  mutate(model = "poisson"))
+           
+}
+
+```
+
+
+```{r}
+
+
+model_cross_val_poisson = function(zi, form, df, corpus, tag, num_folds=10){
+  
+  folds <- cut(seq(1,nrow(df)),breaks=num_folds,labels=FALSE)
+  
+  pred_df = data.frame()
+  
+  for(i in 1:num_folds){
+    testIndexes = which(folds==i,arr.ind=TRUE)
+    testData = df[testIndexes,]
+    trainData = df[-testIndexes,]
+
+    if(zi == T) {
+      # For zip models
+      zip_model = trainData %>% pscl::zeroinfl(as.formula(form), data=.)
+      llh_df = get_zip_llh(zip_model, testData)
+      pred_df = rbind(pred_df, llh_df %>% mutate(fold = i, tag = tag, corpus = c, zip = zi))
+      
+    } else {
+      #For poisson models
+      poi_model = glm(as.formula(form), data = trainData, family = "poisson")
+      llh_df = get_poi_llh(poi_model, testData)
+      pred_df = rbind(pred_df, llh_df %>% mutate(fold = i, tag = tag, corpus = c, zip = zi))
+      
+    }
+    
+    
+  }
+
+  return( pred_df )
+}
+    
+
+```
+
+
+```{r}
+
+regression_forms = c(
+  " ~ dist + target_len + target_freq + target_surp + trigger_len + trigger_freq + trigger_surp + pmi"
+)
+
+regression_form_tags = c("PMI")
+
+zip_types = c(T, F)
+
+llh_df = data.frame()
+
+for(i in c(1:length(regression_forms))) {
+  for (c in corpora){
+    for(zi in zip_types){
+
+      form = regression_forms[i]
+      tag = regression_form_tags[i]
+      
+      print(paste("<", i, c, zi, ">", sep="  "))
+      
+      result = model_cross_val_poisson(zi, paste0("n_regressions", form), combined_df %>% filter(corpus == c, window == "w0"), corpus = c, tag = tag)
+      
+      llh_df = rbind(llh_df, result )
+      
+    }
+  }
+}
+
+
+```
+
+```{r}
+
+llh_df %>%
+  group_by(model, corpus) %>%
+    summarise(m = mean(llh), sd = std.error(llh),
+              ymax = m + 1.96 * sd, ymin = m - 1.96 * sd) %>%
+  ungroup() %>%
+  ggplot(aes(x = corpus, y = m, color = model)) +
+    geom_point() +
+    geom_errorbar(aes(ymax = ymax, ymin = ymin), width = 0.5)
+
+```
+
+
+
+
+
+

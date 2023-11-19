@@ -38,9 +38,12 @@ options(dplyr.summarise.inform = FALSE)
 set.seed(444)
 options(scipen=999)
 
-corpora = c("provo", "ucl")
+corpora = c("provo", "ucl", "dundee")
 windows = c("w0", "w1_mean", "w1_max") #How many words on either side of the target do we integrate into the analysis?
 models = c("BERT-allRC", "BERT-maskRC", "BERT-dropRC")
+
+# Saving data locally because the file is too large for Github
+local_path_to_data = "../../../../research/regressions/ancillary_data/"
 ```
 
 
@@ -147,7 +150,7 @@ provo_df %>%
 ```{r}
 
 ucl_pairwise_df = read.csv("../../data/harmonized_results/ucl_pairwise_stats_df.csv")
-ucl_sacc_df = read.csv("../data/../harmonized_results/ucl_saccades_df.csv")
+ucl_sacc_df = read.csv("../../data/harmonized_results/ucl_saccades_df.csv")
 
 ucl_agg_regressions = ucl_sacc_df %>%
   mutate(next_ia_idx = as.numeric(next_ia_idx), prev_ia_idx = as.numeric(prev_ia_idx)) %>%
@@ -242,13 +245,51 @@ print(2942 / 27188)
 
 ```
 
-## Combine UCL and Provo DFs
+Dundee Dataset
+
+```{r}
+
+dundee_pairwise_df = read.csv("../../data/harmonized_results/dundee_pairwise_stats_df.csv")
+dundee_sacc_df = read.csv("../../data/harmonized_results/dundee_saccades_df.csv")
+
+dundee_agg_regressions = dundee_sacc_df %>%
+  mutate(next_ia_idx = as.numeric(next_ia_idx), prev_ia_idx = as.numeric(prev_ia_idx)) %>%
+  drop_na() %>%
+  filter(next_ia_idx < curr_ia_idx) %>%
+  group_by(text_id, sent_id, curr_ia_idx, next_ia_idx) %>%
+    summarise(n_regressions = n(), n_subjs = length(unique(subj))) %>%
+  ungroup() %>%
+  dplyr::rename(
+    trigger_idx = curr_ia_idx,
+    target_idx = next_ia_idx
+  )
+  
+dundee_df = dundee_pairwise_df %>%
+  merge(dundee_agg_regressions, all= T, by=c("text_id", "sent_id", "trigger_idx", "target_idx")) %>%
+  mutate(corpus = "dundee")%>%
+  mutate(ppmi = if_else(pmi > 0, pmi, 0),
+         npmi = if_else(pmi < 0, pmi, 0),
+         target_len = as.numeric(target_len),
+         target_freq = as.numeric(target_freq)) %>%
+  dplyr::rename(model = mask_type) %>%
+  mutate(model = case_when(model == "none" ~ "BERT-allRC", model == "mask" ~ "BERT-maskRC", model == "truncate" ~ "BERT-dropRC")) %>%
+  dplyr::select(-X) %>% mutate(window = "w0") %>%
+  dplyr::select(cols2keep) %>%
+  arrange(text_id, sent_id, trigger_idx, target_idx) %>%
+  filter(text_id <= 10)
+
+
+```
+
+
+## Combine DFs
 
 ```{r}
 
 combined_df = data.frame()
 combined_df = rbind(combined_df, ucl_df)
 combined_df = rbind(combined_df, provo_df)
+combined_df = rbind(combined_df, dundee_df)
   
 combined_df = combined_df %>%
   distinct() %>%
@@ -262,13 +303,8 @@ combined_df = combined_df %>%
   drop_na() %>%
   filter(is_multitok == "False")
 
-# Saving data locally because the file is too large for Github
-local_path_to_data = "../../../../research/regressions/ancillary_data/combined_df_raw.csv"
+write_rds(combined_df, paste0(local_path_to_data, "combined_df_raw.csv"))
 
-write_rds(combined_df, local_path_to_data)
-
-combined_df %>%
-  arrange(corpus, text_id, sent_id, trigger_idx, target_idx)
 
 ```
 
